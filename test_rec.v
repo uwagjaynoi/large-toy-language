@@ -73,6 +73,20 @@ Fail Definition test5 : nat -> bool :=
 Definition eq3 : (fun (m : nat) =>
     match m with | O => F2 | S _ => F1 end) 1 = F1 := eq_refl.
 
+Fail Definition test9 : nat -> bool :=
+  fix f (n : nat) : bool :=
+    match n with
+    | O => true
+    | S n' => if true then f (S n') else f n'
+    end.
+
+Definition test10 : nat -> bool :=
+  fix f (n : nat) : bool :=
+    match n with
+    | O => true
+    | S n' => if true then f n' else f n'
+    end.
+
 Inductive tree := (* binary tree *)
 | tn : tree
 | tc : nat -> tree -> tree -> tree

@@ -6,3 +6,5 @@
 .lia.cache
 make
 note.txt
+.gitignore
+cp_agda.v

@@ -76,9 +76,11 @@ Defined.
 Disable Notation "/\".
 Disable Notation "\/".
 Disable Notation "'exists'" (all).
+Disable Notation "( x , y , .. , z )".
 Notation "A /\ B" := (A * B)%type.
 Notation "A \/ B" := (A + B)%type.
 Notation "'exists' x .. y , p" := (sigT (fun x => .. (sigT (fun y => p)) ..)).
+Notation "( x , .. , y , z )" := (pair x .. (pair y z) ..).
 
 (* Syntax *)
 Inductive ty : Type :=
@@ -269,8 +271,8 @@ Local Hint Constructors subtype : core.
 
 (* Subtype Lemmas *)
 Lemma sub_inversion_arrow U V1 V2 :
-  U <: <{{V1->V2}}> -> U = <{{Bot}}> \/
-  exists U1 U2, U = <{{U1->U2}}> /\
+  U <: <{{V1 -> V2}}> -> U = <{{Bot}}> \/
+  exists U1 U2, U = <{{U1 -> U2}}> /\
   V1 <: U1 /\ U2 <: V2.
 Proof. intros HSU; inverts HSU; eauto 6. Defined.
 
@@ -299,6 +301,12 @@ Proof.
   destruct IHT1_1, IHT1_2; eauto.
 Defined.
 
+Hint Extern 1 (subtype ?S ?U) =>
+  match goal with
+  | H: subtype S ?T |- _ => apply (@subtype_trans S T U)
+  | H: subtype ?T U |- _ => apply (@subtype_trans S T U)
+  end : core.
+
 Lemma sub_arrow_arrow U1 U2 V1 V2 :
   <{{U1 -> U2}}> <: <{{V1 -> V2}}> ->
   V1 <: U1 /\ U2 <: V2.
@@ -308,6 +316,15 @@ Proof.
   - discriminate.
   - inverts Heq. auto.
 Defined.
+
+Ltac sub_inverts H :=
+  match type of H with
+  | <{{_ -> _}}> <: <{{_ -> _}}> => destruct (sub_arrow_arrow _ _ _ _ H); clear H
+  | _ <: <{{_ -> _}}> => destruct (sub_inversion_arrow _ _ _ H) as [?|(?&?&?&?&?)]; subst
+  | <{{_ -> _}}> <: _ => destruct (sup_inversion_arrow _ _ _ H) as [?|(?&?&?&?&?)]; subst
+  | _ <: <{{Bot}}> => apply sub_inversion_bot in H; subst
+  | _ <: <{{Empty}}> => destruct (sub_inversion_empty _ H) as [?|?]; subst
+  end.
 
 Fixpoint subtypecp (S1 S2 : ty) : bool * bool :=
   match S1, S2 with
@@ -339,7 +356,7 @@ Theorem subtype_reflectp : forall S1 S2, reflectT (S1 <: S2) (fst (subtypecp S1 
   destruct (snd (subtypecp S12 S22));
   inverts H1; inverts H2; inverts H3; inverts H4; simpl;
   split; constructor; eauto;
-  intros Hcontra; apply sub_arrow_arrow in Hcontra; destruct Hcontra; eauto.
+  intros Hcontra; sub_inverts Hcontra; eauto.
 Defined.
 
 Definition subtypec (S1 S2 : ty) : bool := fst (subtypecp S1 S2).
@@ -372,6 +389,184 @@ Inductive has_type : tm -> ty -> context -> Set :=
 where "Gamma '|--' t '\in' T" := (has_type t T Gamma).
 Local Hint Constructors has_type : core.
 
+
+(* value *)
+
+Lemma value_bot t :
+  empty |-- t \in Bot ->
+  value t ->
+  False.
+Proof.
+  intros HT. remember empty as emp. remember Ty_Bot as bot.
+  induction HT; subst; try discriminate; try solve[intros Hv; inverts Hv].
+  - (* sub *) eauto using sub_inversion_bot.
+Defined.
+
+Lemma value_empty t :
+  empty |-- t \in Empty ->
+  value t ->
+  False.
+Proof.
+  intros HT. remember empty as emp. remember Ty_Empty as Emp.
+  induction HT; subst; try discriminate; try solve[intros Hv; inverts Hv].
+  - (* sub *) apply sub_inversion_empty in s. destruct s; eauto. subst. eauto using value_bot.
+Defined.
+
+Lemma value_arrow t T1 T2 :
+  empty |-- t \in (T1 -> T2) ->
+  value t ->
+  exists T1', T1 <: T1' /\
+  exists x u, t = <{\x:T1', u}> /\ ((x |-> T1') |-- u \in T2).
+Proof.
+  intros HT.
+  remember empty as emp; gen Heqemp.
+  remember <{{T1 -> T2}}> as TArr; gen T1 T2.
+  induction HT; intros T1' T2' Hemp Heq Hv; subst; try discriminate;
+  try solve[inverts Hv].
+  - (* abs *)
+    injection Hemp as ? ?; subst; eauto 6.
+  - (* sub *)
+    sub_inverts s.
+    + false. eauto using value_bot.
+    + specialize (IHHT _ _ eq_refl eq_refl Hv).
+      destruct IHHT as (T1 & HSU3 & x1 & u & Heq & HT2). subst.
+      exists T1.
+      eauto 7.
+Defined.
+
+Lemma value__nf (t : tm) : value t -> forall t', t ---> t' -> False.
+  intros HV t' HS; inverts HV; inverts HS.
+Defined.
+
+Lemma type_inversion_var Gamma (x : INDEX) T :
+  Gamma |-- x \in T ->
+  exists T', Gamma x = Some T' /\ T' <: T.
+Proof.
+  remember (tm_var x) as t.
+  intros HT. induction HT; inverts Heqt; eauto.
+  destruct IHHT as (? & ? & ?); eauto using subtype_trans.
+Defined.
+
+Inductive hastype_index : Set :=
+  | i_var | i_abs | i_app | i_elim | i_unit | i_sub
+.
+
+Lemma debug_has_type_induction :
+	      forall
+         P : forall (t : tm) (t0 : ty) (c : context), c |-- t \in t0 -> Set,
+       (forall (Gamma : context) (x : INDEX) (T : ty) (e : Gamma x = Some T),
+        (exists iii, iii=i_var) ->
+        P x T Gamma (T_Var Gamma x T e)) ->
+       (forall (Gamma : context) (x : INDEX) (T1 T2 : ty)
+          (t : tm) (h : (x |-> T2; Gamma) |-- t \in T1),
+        P t T1 (x |-> T2; Gamma) h ->
+        (exists iii, iii=i_abs) ->
+        P <{ \ x : T2, t }> <{{ T2 -> T1 }}> Gamma (T_Abs Gamma x T1 T2 t h)) ->
+       (forall (Gamma : context) (T1 T2 : ty) (t1 t2 : tm)
+          (h : Gamma |-- t1 \in (T1 -> T2)),
+        P t1 <{{ T1 -> T2 }}> Gamma h ->
+        forall h0 : Gamma |-- t2 \in T1,
+        P t2 T1 Gamma h0 ->
+        (exists iii, iii=i_app) ->
+        P <{ t1 t2 }> T2 Gamma (T_App Gamma T1 T2 t1 t2 h h0)) ->
+       (forall (Gamma : context) (T : ty) (t : tm)
+          (h : Gamma |-- t \in Empty),
+        P t <{{ Empty }}> Gamma h ->
+        (exists iii, iii=i_elim) ->
+        P <{ t .elim T }> T Gamma (T_Elim Gamma T t h)) ->
+       (forall Gamma : context,
+        (exists iii, iii=i_unit) ->
+        P <{ unit }> <{{ Unit }}> Gamma (T_Unit Gamma)) ->
+       (forall (Gamma : context) (T1 T2 : ty) (t : tm)
+          (s : T1 <: T2) (h : Gamma |-- t \in T1),
+        (exists iii, iii=i_sub) ->
+        P t T1 Gamma h -> P t T2 Gamma (T_Sub Gamma T1 T2 t s h)) ->
+       forall (t : tm) (t0 : ty) (c : context) (h : c |-- t \in t0),
+       P t t0 c h.
+Proof.
+  intros P H1 H2 H3 H4 H5 H6.
+  induction h; eauto.
+Defined.
+
+Lemma abs_not_in_bot Gamma x T t : Gamma |-- \x:T,t \in Bot -> False.
+Proof.
+  remember <{\x:T,t}> as t0. remember <{{Bot}}> as T0.
+  intros HT; induction HT; intros; inverts Heqt0; inverts HeqT0.
+  sub_inverts s. auto.
+Defined.
+
+Definition sub_context (Gamma Gamma' : context) :=
+  forall x T', Gamma' x = Some T' ->
+  exists T, Gamma x = Some T /\ T <: T'.
+Lemma sub_context_upd Gamma Gamma' x T1 T2 :
+  sub_context Gamma Gamma' ->
+  T1 <: T2 ->
+  sub_context (x|->T1; Gamma) (x|->T2; Gamma').
+Proof.
+  intros H HSU x0 T' Heq.
+  destruct (eqb_spec x x0); subst.
+  - rewrite update_eq in *. inverts Heq. eauto.
+  - rewrite update_neq in *; eauto.
+Defined.
+
+Lemma sub_context_refl Gamma:
+  sub_context Gamma Gamma.
+Proof. unfold sub_context; eauto. Defined.
+Lemma sub_context_upd_refl1 Gamma Gamma' x T :
+  sub_context Gamma Gamma' ->
+  sub_context (x|->T; Gamma) (x|->T; Gamma').
+Proof. eauto using sub_context_upd. Defined.
+Lemma sub_context_upd_refl2 Gamma x T1 T2 :
+  T1 <: T2 ->
+  sub_context (x|->T1; Gamma) (x|->T2; Gamma).
+Proof. eauto using sub_context_upd, sub_context_refl. Defined.
+
+Theorem sub_context_type Gamma Gamma' t T :
+  sub_context Gamma Gamma' ->
+  Gamma' |-- t \in T ->
+  Gamma |-- t \in T.
+Proof.
+  intros Hsub HT. gen Gamma. induction HT; intros; eauto.
+  - (* var *) destruct (Hsub _ _ e) as [T' [Heq HSU]]. eauto.
+  - (* abs *) eauto using sub_context_upd_refl1.
+Defined.
+
+Lemma type_inversion_abs Gamma x T0 T1 T2 t :
+  Gamma |-- \x:T0,t \in <{{T1 -> T2}}> ->
+  T1 <: T0 /\ (x|->T1; Gamma) |-- t \in T2.
+Proof.
+  remember (tm_abs x T0 t) as t0. remember <{{T1 -> T2}}> as T3.
+  introv HT. gen T1 T2.
+  (* gen x T1 t. *)
+  (* eapply debug_has_type_induction. *)
+  induction HT; intros; inverts Heqt0.
+  - inverts HeqT3; eauto.
+  - subst. sub_inverts s.
+    + false. eauto using abs_not_in_bot.
+    + edestruct IHHT as [IH1 IH2]; split; eauto.
+      eapply T_Sub with (T1 := x1); eauto.
+      eapply sub_context_type; eauto.
+      eapply sub_context_upd_refl2; eauto.
+Defined.
+
+Lemma type_inversion_app Gamma T2 t1 t2 :
+  Gamma |-- t1 t2 \in T2 ->
+  exists T1, Gamma |-- t1 \in <{{T1 -> T2}}> /\ Gamma |-- t2 \in T1.
+Proof.
+  remember <{t1 t2}> as t0. introv HT.
+  induction HT; intros; inverts Heqt0; eauto.
+  destruct IHHT as (T3 & HT1 & HT2); eauto.
+Defined.
+
+Lemma type_inversion_elim Gamma T1 T2 t :
+  Gamma |-- t.elim T1 \in T2 ->
+  Gamma |-- t \in Empty /\ T1 <: T2.
+Proof.
+  remember <{t.elim T1}> as t0. introv HT.
+  induction HT; intros; inverts Heqt0; eauto.
+  destruct IHHT as (IH1 & IH2); eauto.
+Defined.
+
 Fixpoint eqb_ty (T1 T2 : ty) : bool :=
   match T1,T2 with
   | <{{Bot}}>, <{{Bot}}> => true
@@ -382,7 +577,8 @@ Fixpoint eqb_ty (T1 T2 : ty) : bool :=
   | <{{Unit}}>, <{{Unit}}> => true
   | _,_ =>
       false
-  end.
+  end
+.
 
 Theorem eqb_ty_reflect (T1 T2 : ty) : reflectT (T1 = T2) (eqb_ty T1 T2).
 Proof.
@@ -425,8 +621,6 @@ Notation " x <- e1 ;; e2" := (match e1 with
                               | None => None
                               end)
          (right associativity, at level 60).
-
-(* Locate "sub". *)
 
 Fixpoint has_typec (t : tm) (Gamma : context) : option ty :=
   match t with
@@ -486,13 +680,12 @@ Proof.
   - (* app *)
     destruct IHHT1 as (T1' & IH1 & HSU1). rewrite IH1.
     destruct IHHT2 as (T2' & IH2 & HSU2). rewrite IH2.
-    apply sub_inversion_arrow in HSU1.
-    destruct HSU1 as [Heq|(U1 & U2 & Heq & HSU3 & HSU4)]; subst T1'; simpl; eauto.
-    + destruct (subtype_reflect T2' U1); eauto; try solve [false; eauto using subtype_trans].
+    sub_inverts HSU1; simpl; eauto.
+    destruct (subtype_reflect T2' x); eauto; try solve [false; eauto].
   - (* empty *)
     destruct IHHT as (T' & IH & HSU). rewrite IH.
-    apply sub_inversion_empty in HSU. destruct HSU; subst T'; simpl; eauto.
-  - (* sub *) destruct IHHT as (T' & IH & HSU). eauto using subtype_trans.
+    sub_inverts HSU; simpl; eauto.
+  - (* sub *) destruct IHHT as (T' & IH & HSU); eauto.
 Defined.
 
 (* Lemma has_type_abs_inversion Gamma x T1 t T :
@@ -500,55 +693,6 @@ Defined.
   {U1 & {U2 & T = <{{U1 -> U2}}> *
   U1 <: T1 *
   (x|->T1; Gamma) |-- t \in U2}}. *)
-
-(* value *)
-
-Lemma value_bot t :
-  empty |-- t \in Bot ->
-  value t ->
-  False.
-Proof.
-  intros HT. remember empty as emp. remember Ty_Bot as bot.
-  induction HT; subst; try discriminate; try solve[intros Hv; inverts Hv].
-  - (* sub *) eauto using sub_inversion_bot.
-Defined.
-
-Lemma value_empty t :
-  empty |-- t \in Empty ->
-  value t ->
-  False.
-Proof.
-  intros HT. remember empty as emp. remember Ty_Empty as Emp.
-  induction HT; subst; try discriminate; try solve[intros Hv; inverts Hv].
-  - (* sub *) apply sub_inversion_empty in s. destruct s; eauto. subst. eauto using value_bot.
-Defined.
-
-Lemma value_arrow t T1 T2 :
-  empty |-- t \in (T1 -> T2) ->
-  value t ->
-  exists T1', T1 <: T1' /\
-  exists x u, t = <{\x:T1', u}> /\ ((x |-> T1') |-- u \in T2).
-Proof.
-  intros HT.
-  remember empty as emp; gen Heqemp.
-  remember <{{T1 -> T2}}> as TArr; gen T1 T2.
-  induction HT; intros T1' T2' Hemp Heq Hv; subst; try discriminate;
-  try solve[inverts Hv].
-  - (* abs *)
-    injection Hemp as ? ?; subst; eauto 6 using existT.
-  - (* sub *)
-    apply sub_inversion_arrow in s.
-    destruct s as [Heq | (U1 & U2 & Heq & HSU1 & HSU2)]; subst.
-    + false. eauto using value_empty.
-    + specialize (IHHT _ _ eq_refl eq_refl Hv).
-      destruct IHHT as (T1 & HSU3 & x & u & Heq & HT2). subst.
-      exists T1.
-      eauto 7 using existT, subtype_trans.
-Defined.
-
-Lemma value__nf (t : tm) : value t -> forall t', t ---> t' -> False.
-  intros HV t' HS; inverts HV; inverts HS.
-Defined.
 
 Theorem progress (t : tm) (T : ty) :
   empty |-- t \in T ->
@@ -636,6 +780,7 @@ Proof.
 Defined.
 
 Theorem preservation (t t' : tm) (T : ty) : empty |-- t \in T -> t ---> t' -> empty |-- t' \in T.
+Proof.
   intros HT HS. remember empty as emp. gen t'.
   induction HT; subst Gamma; try discriminate;
   introv HS; inverts HS; eauto.
@@ -684,7 +829,6 @@ Lemma nf_multi_refl (t1 t2 : tm) : nf t1 -> t1 -->* t2 -> t1 = t2.
 Proof.
   intros Hnf HM. unfold nf in *; inverts HM; [eauto| exfalso; eauto].
 Defined.
-
 
 Theorem multi_preservation t1 t2 T :
   t1 -->* t2 ->
@@ -778,17 +922,18 @@ Proof.
   introv HM; induction HM; eauto using strong_norm_forward.
 Defined.
 
-Definition contextv := list (INDEX * tm * ty).
+Definition contextv := list (INDEX * (tm * ty)).
 Fixpoint addto_context (l : contextv) (G : context) : context :=
   match l with
   | nil => G
   | cons (x,t,T) l' => x|->T; addto_context l' G
   end
 .
+Notation "l ||-> G" := (addto_context l G) (at level 100).
 
-Inductive good : contextv -> Type :=
-  | goodn : good nil
-  | goodc x t T G : good G -> empty |-- t \in T -> strong_norm t T -> good (cons (x,t,T) G)
+Inductive close : contextv -> Type :=
+  | closen : close nil
+  | closec x t T G : close G -> empty |-- t \in T -> strong_norm t T -> close (cons (x,t,T) G)
 .
 
 Fixpoint substm (l : contextv) (t : tm) : tm :=
@@ -797,12 +942,63 @@ Fixpoint substm (l : contextv) (t : tm) : tm :=
   | cons (x,t',_) l' => substm l' <{[x:=t']t}>
   end
 .
+Notation "[/ l ] t" := (substm l t) (in custom stlc at level 20, l constr).
+
+Lemma wt_subst_eq t : forall Gamma T x t', Gamma |-- t \in T -> Gamma x = None -> <{[x:=t']t}> = t.
+Proof.
+  induction t; introv HT Heq; simpl; eauto.
+   (* try solve[inverts HT; f_equal; eauto]. *)
+  - (* var *)
+    apply type_inversion_var in HT.
+    destruct HT as (T' & Heqi & HSU).
+    (*--------------------------------------------------*)
+    destruct (eqb_spec i x); [congruence | reflexivity].
+  - apply type_inversion_abs in HT.
+  - admit.
+  -
+    destruct (eqb_spec x0 s); try(reflexivity).
+    f_equal. iac H. eapply IHt.
+    + eapply H6.
+    + rewrite update_neq; eauto.
+  - admit.
+  - admit.
+  - admit.
+Admitted.
+
+Lemma wt_substi_eq : forall Gamma' t Gamma T, Gamma |-- t \in T -> (forall p q r, Lists.List.In (p,q,r) Gamma' -> Gamma p = None) -> substm Gamma' t = t.
+Proof.
+  induction Gamma'; intros.
+  - reflexivity.
+  - destruct a as [[p q] r]. simpl.
+    erewrite wt_subst_eq.
+    + eapply IHGamma'.
+      * apply H.
+      * intros. eapply H0. right. eapply H1.
+    + eapply H.
+    + eapply H0. left. reflexivity.
+Qed.
+
+Lemma var_case Gammav x T :
+  (Gammav ||-> empty) x = Some T ->
+  close Gammav ->
+  strong_norm <{[/Gammav]x}> T.
+Proof.
+  induction Gammav; simpl; try discriminate.
+  destruct a as (x1 & t & T1).
+  intros Heq Hc. inverts Hc.
+  destruct (eqb_spec x x1); subst; eq_case_ty.
+
+  Check update_neq.
+  2:{}
 
 Theorem has_type__strong_norm t : forall Gamma T,
-  addto_context Gamma empty |-- t \in T ->
-  good Gamma ->
-  strong_norm (substm Gamma t) T.
+  (Gamma ||-> empty) |-- t \in T ->
+  close Gamma ->
+  strong_norm <{[/Gamma]t}> T.
 Proof.
+  introv HT. remember (Gamma ||-> empty) as G.
+  gen Gamma. induction HT; intros Gammav Heq; subst.
+  -
 Admitted.
 
 

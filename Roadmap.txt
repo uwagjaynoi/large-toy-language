@@ -1,0 +1,35 @@
+Terms:
+
+t = x | \x:T,t | t t | unit
+	| true | false | if t then t else t
+	| O | S t | case t of |O => t |S x => t | fixnat F t of |O => t |S x x => t
+	| inl T t | inr T t | (t, t) | t.fst | t.snd | case t of |inl x => t |inr x => t
+	| nil T | cons t t | case(and rec like nat)
+	| {i=t,...} | t.i
+	| <i=t> as T | case_of ...
+	| let x = t in t | fix t
+	| error
+
+T = T -> T | Empty | Unit | Bot | Top
+	| Bool | Nat
+	| T + T | T * T | List T
+	| rec | var
+
+关系:
+	rel tm : step, multistep
+	rel ty : sub
+	has_type
+
+Notice :
+	由于有 Variant 和 Record, 不是所有类型都是 well-formed, 需先定义 well-formed 的类型
+
+	error 由下而上传播, 但在函数里面的也不管, 类型取为 Bot
+
+	subtype 和四个平凡类型:
+	Empty 和 Unit 是数据类型, 只有 elim 和 unit 与其相关
+	Top 和 Bot 是 subtype 类型的最大最小元, 在算法求一个项的类型时需要求 lub(e.g. if then else) 和 glb(函数里就取反了) 要保证存在.
+
+要证明:
+	progress
+	preserve
+	normalize: 如果没有 fix, 则一定终止
