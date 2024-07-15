@@ -1,6 +1,6 @@
 Terms:
 
-t = x | \x:T,t | t t | unit
+t = x | \x:T,t | t t | .elim | unit
 	| true | false | if t then t else t
 	| O | S t | case t of |O => t |S x => t | fixnat F t of |O => t |S x x => t
 	| inl T t | inr T t | (t, t) | t.fst | t.snd | case t of |inl x => t |inr x => t

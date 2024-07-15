@@ -87,6 +87,14 @@ Definition test10 : nat -> bool :=
     | S n' => if true then f n' else f n'
     end.
 
+Fail Definition test11 : nat -> bool :=
+  fix f (n : nat) : bool :=
+    match n with
+    | O => true
+    | S n' => f 0
+    end.
+
+
 Inductive tree := (* binary tree *)
 | tn : tree
 | tc : nat -> tree -> tree -> tree

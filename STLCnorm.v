@@ -2,7 +2,7 @@ Require Import Bool.Bool.
 Require Import Classes.CRelationClasses Classes.CEquivalence Classes.CMorphisms.
 Require Setoids.Setoid.
 Require Import Setoid Morphisms CMorphisms.
-From PLF Require Import LibTactics.
+From Lambda Require Import LibTactics.
 Set Default Goal Selector "!".
 
 Section STLC.
@@ -1060,7 +1060,6 @@ Proof.
   false; eauto.
 Defined.
 
-Check value__nf.
 Lemma value__norm : forall t, value t -> normalizing t.
 Proof.
   intros. exists t; eauto using value__nf.
@@ -1164,8 +1163,6 @@ Proof.
   intros. eapply strong_norm__norm; eapply has_type__strong_norm with (Gamma := nil); eauto. constructor.
 Defined.
 
-Print Assumptions has_type__norm.
-
 (* Computing *)
 Definition pretty_print_progress t T (H : empty |-- t \in T) : option tm :=
   match progress _ _ H with
@@ -1186,8 +1183,6 @@ Fixpoint infinite_compute (n : nat) t T (HT : empty |-- t \in T) : option (sigT 
       end
     end
   end.
-
-Print All Dependencies preservation.
 
 Definition pretty_print_multiprogress n t T (H : empty |-- t \in T) : option tm :=
   match infinite_compute n _ _ H with
@@ -1225,11 +1220,10 @@ Definition eg : has_type nat eqb
 Defined.
 
 Compute (pretty_print_progress _ _ _ _ eg).
-Locate eqb_spec.
-
 Compute (pretty_print_multiprogress _ _ my_eqb_spec 3 _ _ eg).
-Print Assumptions pretty_print_multiprogress.
 
+(* Print All Dependencies preservation. *)
+Print Assumptions pretty_print_multiprogress.
 Print Assumptions progress.
 Print Assumptions preservation.
 Print Assumptions normalizing.

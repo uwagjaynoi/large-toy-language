@@ -1,5 +1,9 @@
 Just an version update list.
 
+0715: ty tm subst value step
+
+0714: 完成 STLC normalizing
+
 0713: 在决定写归纳的 nat 函数用什么形式时发现写成 Fixpoint 的归纳是很不平凡的, 测试了各种情况.
 
 0712: 把 Empty/Bot 和 Unit/Top 拆成了四种类型, 分别给了不一样的意义. 稍微实现了一点 normalizing 的 infrastructure. 晚上又学到上面四个类型和 subtype 和在有 side-effect 的语言中的作用.
