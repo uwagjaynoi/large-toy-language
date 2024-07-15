@@ -531,22 +531,16 @@ Proof.
   - (* abs *) eauto using sub_context_upd_refl1.
 Defined.
 
-Lemma type_inversion_abs Gamma x T0 T1 T2 t :
-  Gamma |-- \x:T0,t \in <{{T1 -> T2}}> ->
+Lemma type_inversion_abs Gamma x T0 T t :
+  Gamma |-- \x:T0,t \in T ->
+  exists T1 T2, <{{T1 -> T2}}> <: T /\
   T1 <: T0 /\ (x|->T1; Gamma) |-- t \in T2.
 Proof.
-  remember (tm_abs x T0 t) as t0. remember <{{T1 -> T2}}> as T3.
-  introv HT. gen T1 T2.
-  (* gen x T1 t. *)
-  (* eapply debug_has_type_induction. *)
+  remember (tm_abs x T0 t) as t0.
+  introv HT.
   induction HT; intros; inverts Heqt0.
-  - inverts HeqT3; eauto.
-  - subst. sub_inverts s.
-    + false. eauto using abs_not_in_bot.
-    + edestruct IHHT as [IH1 IH2]; split; eauto.
-      eapply T_Sub with (T1 := x1); eauto.
-      eapply sub_context_type; eauto.
-      eapply sub_context_upd_refl2; eauto.
+  - eauto.
+  - destruct IHHT as (T3 & T4 & HSU1 & HSU2 & HT2); eauto 7.
 Defined.
 
 Lemma type_inversion_app Gamma T2 t1 t2 :
@@ -954,29 +948,27 @@ Proof.
     (*--------------------------------------------------*)
     destruct (eqb_spec i x); [congruence | reflexivity].
   - apply type_inversion_abs in HT.
-  - admit.
-  -
-    destruct (eqb_spec x0 s); try(reflexivity).
-    f_equal. iac H. eapply IHt.
-    + eapply H6.
-    + rewrite update_neq; eauto.
-  - admit.
-  - admit.
-  - admit.
-Admitted.
+    destruct HT as (T1 & T2 & HSU & HSU2 & HT2).
+    f_equal. destruct (eqb_spec i x); eauto.
+    eapply IHt; eauto. rewrite update_neq; eauto.
+  - apply type_inversion_app in HT.
+    destruct HT as (T1 & HT1 & HT2).
+    f_equal; eauto.
+  - apply type_inversion_elim in HT. destruct HT. f_equal; eauto.
+Defined.
 
-Lemma wt_substi_eq : forall Gamma' t Gamma T, Gamma |-- t \in T -> (forall p q r, Lists.List.In (p,q,r) Gamma' -> Gamma p = None) -> substm Gamma' t = t.
+Lemma wt_substi_eq : forall Gamma' t Gamma T, Gamma |-- t \in T -> (forall x t1 T1, Lists.List.In (x,t1,T1) Gamma' -> Gamma x = None) -> substm Gamma' t = t.
 Proof.
   induction Gamma'; intros.
   - reflexivity.
-  - destruct a as [[p q] r]. simpl.
+  - destruct a as (x&t1&T1). simpl.
     erewrite wt_subst_eq.
     + eapply IHGamma'.
       * apply H.
       * intros. eapply H0. right. eapply H1.
     + eapply H.
     + eapply H0. left. reflexivity.
-Qed.
+Defined.
 
 Lemma var_case Gammav x T :
   (Gammav ||-> empty) x = Some T ->
@@ -987,9 +979,150 @@ Proof.
   destruct a as (x1 & t & T1).
   intros Heq Hc. inverts Hc.
   destruct (eqb_spec x x1); subst; eq_case_ty.
+  erewrite wt_substi_eq; eauto.
+Defined.
 
-  Check update_neq.
-  2:{}
+Theorem substm_wt t : forall Gammav T,
+  (Gammav ||-> empty) |-- t \in T ->
+  close Gammav ->
+  empty |-- [/Gammav]t \in T.
+Proof.
+  intros Gammav. gen t.
+  induction Gammav; simpl; eauto.
+  destruct a as (x & t1 & T1).
+  intros t T HT Hc. inverts Hc.
+  eauto using substitution_preserves_typing.
+Defined.
+
+Lemma substm_app : forall Gammav t1 t2,
+  <{[/Gammav](t1 t2)}> = <{([/Gammav]t1) ([/Gammav]t2)}>.
+Proof.
+  induction Gammav; simpl; eauto.
+  destruct a as (x & t & T).
+  intros. rewrite IHGammav. reflexivity.
+Defined.
+
+Lemma substm_unit : forall Gammav,
+  <{[/Gammav]unit}> = <{unit}>.
+Proof.
+  induction Gammav; simpl; eauto.
+  destruct a as (x & t & T). auto.
+Defined.
+
+Theorem strong_norm__norm : forall T t,
+  strong_norm t T -> normalizing t.
+Proof.
+  induction T; simpl; eauto.
+  - (* arr *)
+    intros ? [Hn Hs]. eauto.
+Defined.
+
+Theorem sub_strong_sub : forall T1 T2,
+  T1 <: T2 -> forall t,
+  strong_norm t T1 ->
+  strong_norm t T2.
+Proof.
+  introv HSU. induction HSU; simpl; eauto.
+  - (* bot *) intros. false.
+  - (* top *) eauto using strong_norm__norm.
+  - (* arr *) intros t [Hnf Hs]. split; eauto.
+Defined.
+
+Fixpoint filter_out (x : INDEX) (l : contextv) : contextv :=
+  match l with
+  | nil => nil
+  | cons (x',t,T) l' => if x =? x' then filter_out x l' else cons (x',t,T) (filter_out x l')
+  end
+.
+
+Lemma substm_abs : forall x T1 Gammav t,
+  <{[/Gammav]\x:T1,t}> = <{\x:T1, [/filter_out x Gammav]t}>.
+Proof.
+  induction Gammav; simpl; eauto.
+  destruct a as (x' & t' & T'). intros.
+  rewrite IHGammav. f_equal. destruct (eqb_spec x x'); subst; eauto.
+Defined.
+
+Lemma app_cong2 : forall v1 t2 t2',
+  value v1 ->
+  t2 -->* t2' ->
+  <{v1 t2}> -->* <{v1 t2'}>.
+Proof.
+  introv Hv HM. induction HM; eauto.
+Defined.
+
+Theorem value_if_nf_ty : forall t T,
+  empty |-- t \in T ->
+  nf t ->
+  value t.
+Proof.
+  intros t T HT Hnf; destruct (progress _ _ HT) as [Hv|[t' Hs]]; eauto;
+  false; eauto.
+Defined.
+
+Check value__nf.
+Lemma value__norm : forall t, value t -> normalizing t.
+Proof.
+  intros. exists t; eauto using value__nf.
+Defined.
+
+Lemma subst_shadow : forall x t1 t2, <{[x:=t1]t2}> = t2 -> forall t, <{[x:=t1]([x:=t2]t)}> = <{[x:=t2]t}>.
+  induction t; simpl; f_equal; eauto;
+  destruct (i =? x) eqn:Heq; eauto; unfold subst.
+  rewrite Heq; eauto.
+Defined.
+
+(* Lemma subst_eqabs s1 t1 T t: <{[s1:=t1](\s1:T,t)}> = <{\s1:T,t}>.
+Proof.
+  unfold subst. destruct (eqb_spec s1 s1); eauto; congruence.
+Defined.
+Lemma subst_neqabs s1 s2 t1 T t: s1 <> s2 -> <{[s1:=t1](\s2:T,t)}> = <{\s2:T,[s1:=t1]t}>.
+Proof.
+  intros. simpl. destruct (eqb_spec s1 s2). eauto; false.
+
+  intro. apply neqb_neq in H.
+  unfold subst; rewrite H. reflexivity.
+Qed.
+
+Lemma subst_eqvar s1 t: <{[s1:=t]s1}> = t.
+Proof.
+  unfold subst; rewrite eqb_refl; reflexivity.
+Qed.
+Lemma subst_neqvar s1 (s2 : string) t : s1 <> s2 -> <{[s1:=t]s2}> = s2.
+Proof.
+  intro. apply neqb_neq in H.
+  unfold subst; rewrite H. reflexivity.
+Qed. *)
+
+Lemma triangle x1 x2 x3 : x1 <> x2 -> (x3 =? x1) = true -> (x3 =? x2 = true) -> False.
+Proof.
+  destruct (eqb_spec x3 x1), (eqb_spec x3 x2); congruence.
+Defined.
+
+Lemma subst_permute : forall x1 x2 t1 t2, x1 <> x2 -> <{[x1:=t1]t2}> = t2 -> <{[x2:=t2]t1}> = t1 -> forall t, <{[x1:=t1]([x2:=t2]t)}> = <{[x2:=t2]([x1:=t1]t)}>.
+  introv Hneq Heq1 Heq2.
+  induction t; simpl; try solve[f_equal; eauto];
+  destruct (i =? x1) eqn:Heqx1, (i =? x2) eqn:Heqx2; eauto;
+  repeat rewrite Heq1; repeat rewrite Heq2; simpl;
+  repeat rewrite Heqx1; repeat rewrite Heqx2; eauto.
+  - false. eauto using triangle.
+  - congruence.
+Defined.
+
+Theorem substm_subst : forall Gammav x t1 T t,
+  close Gammav ->
+  empty |-- t1 \in T ->
+  <{[x:=t1]([/filter_out x Gammav]t)}> = <{[/Gammav]([x:=t1]t)}>.
+Proof.
+  induction Gammav; intros; simpl; eauto.
+  destruct a as (x' & t' & T'). inverts X.
+  destruct (eqb_spec x x'); subst.
+  - erewrite IHGammav; eauto.
+    f_equal. symmetry. eapply subst_shadow.
+    eapply wt_subst_eq; eauto.
+  - simpl. erewrite IHGammav; eauto.
+    f_equal. eapply subst_permute; eauto using wt_subst_eq.
+Defined.
 
 Theorem has_type__strong_norm t : forall Gamma T,
   (Gamma ||-> empty) |-- t \in T ->
@@ -998,9 +1131,40 @@ Theorem has_type__strong_norm t : forall Gamma T,
 Proof.
   introv HT. remember (Gamma ||-> empty) as G.
   gen Gamma. induction HT; intros Gammav Heq; subst.
-  -
-Admitted.
+  - (* var *) eauto using var_case.
+  - (* abs *) simpl. intros Hc. split.
+    + rewrite substm_abs. eauto using value__norm.
+    + intros t1 HT1 Hs.
+      destruct (strong_norm__norm _ _ Hs) as (t1' & HM & Hnf).
+      specializes IHHT (cons (x,t1',T2) Gammav) ___.
+      * constructor; eauto using multi_preservation, strong_norm_multi_forward.
+      * simpl in IHHT. rewrite substm_abs.
+        gen IHHT.
+        eapply (strong_norm_multi_back); eauto.
+        eapply multi_trans.
+        -- eapply app_cong2; eauto.
+        -- eapply multi_R.
+           erewrite <- substm_subst; eauto using value_if_nf_ty, multi_preservation.
+  - (* app *) intros Hc.
+    specializes IHHT1 Hc ___. simpl in IHHT1.
+    destruct IHHT1 as [(t1' & HM & Hnf) IH12].
+    specializes IHHT2 Hc ___. specializes IH12 IHHT2.
+    + eauto using substm_wt.
+    + rewrite substm_app. eauto.
+  - (* elim *) intros Hc. false. simpl in IHHT.
+    specializes IHHT Hc ___.
+  - (* unit *) simpl. intros _.  rewrite substm_unit. auto.
+  - (* sub *) intros Hc. eauto using sub_strong_sub.
+Defined.
 
+Theorem has_type__norm t : forall T,
+  empty |-- t \in T ->
+  normalizing t.
+Proof.
+  intros. eapply strong_norm__norm; eapply has_type__strong_norm with (Gamma := nil); eauto. constructor.
+Defined.
+
+Print Assumptions has_type__norm.
 
 (* Computing *)
 Definition pretty_print_progress t T (H : empty |-- t \in T) : option tm :=
@@ -1065,3 +1229,7 @@ Locate eqb_spec.
 
 Compute (pretty_print_multiprogress _ _ my_eqb_spec 3 _ _ eg).
 Print Assumptions pretty_print_multiprogress.
+
+Print Assumptions progress.
+Print Assumptions preservation.
+Print Assumptions normalizing.
