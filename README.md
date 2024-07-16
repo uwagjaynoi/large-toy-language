@@ -1,5 +1,7 @@
 Just an version update list.
 
+0716: step(error) subtype has_type
+
 0715: ty tm subst value step
 
 0714: 完成 STLC normalizing

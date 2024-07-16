@@ -106,3 +106,57 @@ Definition stuck (t : tm) : Prop :=
   step_normal_form t /\ ~ value t.
 
 Hint Unfold stuck : core.
+
+Definition nf : tm -> Prop := normal_form step.
+
+Theorem nf_if_value (t : tm) : value t -> nf t.
+
+
+Ltac find_value_step :=
+  match goal with
+  Hv : value ?t,
+  Hs : ?t --> ?t'
+  |- _ => exfalso; apply (nf_if_value t Hv (ex_intro _ t' Hs)) end.
+
+Ltac find_value_step_aggr :=
+  match goal with
+  Hs : ?t --> ?t'
+  |- _ => exfalso; assert (Hv : value t); [eauto | apply (nf_if_value t Hv (ex_intro _ t' Hs))] end.
+
+Theorem type_unique t : forall Gamma T1 T2, Gamma |-- t \in T1 -> Gamma |-- t \in T2 -> T1 = T2.
+
+
+Definition normalizing (t : tm) := exists t', t -->* t' /\ nf t'.
+
+Definition context_value := list (string * tm * ty).
+
+Ltac search_eq :=
+  subst;
+  try match goal with
+  H : (?s |-> _ ; _) ?s = Some _ |- _
+  => rewrite update_eq in H; injection H as H; subst
+  end;
+  try match goal with
+  H : (?s |-> _ ; _) ?t = _, H2 : ?s <> ?t |- _
+  => rewrite update_neq in H; eauto
+  end.
+
+Lemma good_filt : forall s Gamma, good Gamma -> good (filt s Gamma).
+
+
+Ltac get_norm :=
+  repeat match goal with
+  H1 : forall T, limit_tm ?t -> empty |-- ?t \in T -> normalizing ?t,
+  H2 : limit_tm ?t,
+  H3 : empty |-- ?t \in ?T
+  |- _ =>
+    specialize (H1 T H2 H3); let t'n := fresh"t'" in let Hn1 := fresh"H" in let Hn2 := fresh"H" in destruct H1 as [t'n [Hn1 Hn2]] end.
+
+Ltac get_value :=
+  repeat match goal with
+  H1 : nf ?t',
+  H2 : empty |-- ?t \in ?T,
+  H3 : ?t -->* ?t'
+  |- _ =>
+  let HT' := fresh"HT" in assert (HT' := multi_pre _ _ _ H3 H2); clear H2;
+  let Hv := fresh"Hv" in assert (Hv := value_if_nf_ty _ _ HT' H1); clear H1 end.

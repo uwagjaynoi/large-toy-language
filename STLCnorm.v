@@ -957,7 +957,7 @@ Proof.
   - apply type_inversion_elim in HT. destruct HT. f_equal; eauto.
 Defined.
 
-Lemma wt_substi_eq : forall Gamma' t Gamma T, Gamma |-- t \in T -> (forall x t1 T1, Lists.List.In (x,t1,T1) Gamma' -> Gamma x = None) -> substm Gamma' t = t.
+Lemma wt_substm_eq : forall Gamma' t Gamma T, Gamma |-- t \in T -> (forall x t1 T1, Lists.List.In (x,t1,T1) Gamma' -> Gamma x = None) -> substm Gamma' t = t.
 Proof.
   induction Gamma'; intros.
   - reflexivity.
@@ -979,7 +979,7 @@ Proof.
   destruct a as (x1 & t & T1).
   intros Heq Hc. inverts Hc.
   destruct (eqb_spec x x1); subst; eq_case_ty.
-  erewrite wt_substi_eq; eauto.
+  erewrite wt_substm_eq; eauto.
 Defined.
 
 Theorem substm_wt t : forall Gammav T,
@@ -1070,28 +1070,6 @@ Lemma subst_shadow : forall x t1 t2, <{[x:=t1]t2}> = t2 -> forall t, <{[x:=t1]([
   destruct (i =? x) eqn:Heq; eauto; unfold subst.
   rewrite Heq; eauto.
 Defined.
-
-(* Lemma subst_eqabs s1 t1 T t: <{[s1:=t1](\s1:T,t)}> = <{\s1:T,t}>.
-Proof.
-  unfold subst. destruct (eqb_spec s1 s1); eauto; congruence.
-Defined.
-Lemma subst_neqabs s1 s2 t1 T t: s1 <> s2 -> <{[s1:=t1](\s2:T,t)}> = <{\s2:T,[s1:=t1]t}>.
-Proof.
-  intros. simpl. destruct (eqb_spec s1 s2). eauto; false.
-
-  intro. apply neqb_neq in H.
-  unfold subst; rewrite H. reflexivity.
-Qed.
-
-Lemma subst_eqvar s1 t: <{[s1:=t]s1}> = t.
-Proof.
-  unfold subst; rewrite eqb_refl; reflexivity.
-Qed.
-Lemma subst_neqvar s1 (s2 : string) t : s1 <> s2 -> <{[s1:=t]s2}> = s2.
-Proof.
-  intro. apply neqb_neq in H.
-  unfold subst; rewrite H. reflexivity.
-Qed. *)
 
 Lemma triangle x1 x2 x3 : x1 <> x2 -> (x3 =? x1) = true -> (x3 =? x2 = true) -> False.
 Proof.

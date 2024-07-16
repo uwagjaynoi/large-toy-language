@@ -184,6 +184,8 @@ Inductive value : tm -> Type :=
 .
 Local Hint Constructors value : core.
 
+Notation "'error'" := tm_error.
+
 Reserved Notation "t '-->' t'" (at level 40).
 Inductive step : tm -> tm -> Type :=
   | ST_app1 t1 t1' t2 :
@@ -315,8 +317,15 @@ Inductive step : tm -> tm -> Type :=
     value v1 ->
     t2 --> t2' ->
     tm_vhd v1 t2 --> tm_vhd v1 t2'
-  | ST_vhdVcons x y v1 v2 t1 T1 T2:
+  | ST_vO x y v1 v2 t1 T1 T2:
+    value v1 ->
+    value v2 ->
     tm_vhd (tm_vsing x v1 T1 T2) (tm_vcons x y t1 v2) --> <{[y:=v1]t1}>
+  | ST_vS x y z v1 v2 t1 T1 T2:
+    value v1 ->
+    value v2 ->
+    x <> y ->
+    tm_vhd (tm_vsing x v1 T1 T2) (tm_vcons y z t1 v2) --> tm_vhd (tm_vsing x v1 T1 T2) v2
   | ST_vcons1 x y t1 t2 t2' :
     t2 --> t2' ->
     tm_vcons x y t1 t2 --> tm_vcons x y t1 t2'
@@ -331,5 +340,243 @@ Inductive step : tm -> tm -> Type :=
     tm_fix t1 --> tm_fix t1'
   | ST_fixAbs x T t :
     tm_fix (tm_abs x T t) --> <{[x:={tm_fix (tm_abs x T t)}]t}>
+  | STE_app1 t2 :
+    tm_app error t2 --> error
+  | STE_app2 v1 :
+    value v1 ->
+    tm_app v1 error --> error
+  | STE_elim1 T :
+    tm_elim error T --> error
+  | STE_ite t2 t3 :
+    tm_ite error t2 t3 --> error
+  | STE_succ :
+    tm_S error --> tm_S error
+  | STE_Ncase t2 x t3 :
+    tm_Ncase error t2 x t3 --> error
+  | STE_Nfix t2 t3 :
+    tm_Nfix error t2 t3 --> error
+  | STE_inl T :
+    tm_inl T error --> error
+  | STE_inr T :
+    tm_inr T error --> error
+  | ST_EScase x t2 y t3 :
+    tm_Scase error x t2 y t3 --> error
+  | ST_Epair1 t2 :
+    tm_pair error t2 --> error
+  | ST_Epair2 v1 :
+    value v1 ->
+    tm_pair v1 error --> error
+  | STE_fst :
+    tm_fst error --> error
+  | STE_snd :
+    tm_snd error --> error
+  | STE_cons1 t2 :
+    tm_cons error t2 --> error
+  | STE_cons2 v1 :
+    tm_cons v1 error --> error
+  | STE_Lcase1 t2 x y t3 :
+    tm_Lcase error t2 x y t3 --> error
+  | STE_Lfix1 t2 t3 :
+    tm_Lfix error t2 t3 --> error
+  | STE_rcons1 x t2 :
+    tm_rcons x error t2 --> error
+  | STE_rcons2 x v1 :
+    value v1 ->
+    tm_rcons x v1 error --> error
+  | STE_rproj x :
+    tm_rproj error x --> error
+  | STE_vsing x T1 T2 :
+    tm_vsing x error T1 T2 --> error
+  | STE_vhd1 t2 :
+    tm_vhd error t2 --> error
+  | STE_vhd2 v1 :
+    value v1 ->
+    tm_vhd v1 error --> error
+  | STE_vcons1 x y t1 :
+    tm_vcons x y t1 error --> error
+  | STE_let1 x t2 :
+    tm_let x error t2 --> error
+  | STE_fix1 :
+    tm_fix error --> error
 where "t '-->' t'" := (step t t').
 Local Hint Constructors step : core.
+
+Inductive IsRecord : ty -> Type :=
+  | IsR_Nil : IsRecord <{{RNil}}>
+  | IsR_Cons x T1 T2 : IsRecord T2 -> IsRecord <{{x:T1::T2}}>
+.
+
+Inductive IsVariant : ty -> Type :=
+  | IsV_Nil : IsVariant <{{VNil}}>
+  | IsV_Cons x T1 T2 : IsVariant T2 -> IsVariant <{{x:T1||T2}}>
+.
+
+Inductive WellFormed : ty -> Type :=
+  | WF_Bot : WellFormed <{{Bot}}>
+  | WF_Top : WellFormed <{{Top}}>
+  | WF_Arrow T1 T2 : WellFormed T1 -> WellFormed T2 -> WellFormed <{{T1 -> T2}}>
+  | WF_Empty : WellFormed <{{Empty}}>
+  | WF_Unit : WellFormed <{{Unit}}>
+  | WF_Bool : WellFormed <{{Bool}}>
+  | WF_Nat : WellFormed <{{Nat}}>
+  | WF_Sum T1 T2 : WellFormed T1 -> WellFormed T2 -> WellFormed <{{T1 + T2}}>
+  | WF_Prod T1 T2 : WellFormed T1 -> WellFormed T2 -> WellFormed <{{T1 * T2}}>
+  | WF_List T : WellFormed T -> WellFormed <{{List T}}>
+  | WF_RNil : WellFormed <{{RNil}}>
+  | WF_RCons x T1 T2 : WellFormed T1 -> WellFormed T2 -> IsRecord T2 -> WellFormed <{{x:T1::T2}}>
+  | WF_VNil : WellFormed <{{VNil}}>
+  | WF_VCons x T1 T2 : WellFormed T1 -> WellFormed T2 -> IsVariant T2 -> WellFormed <{{x:T1||T2}}>
+.
+
+Fixpoint lookup (T : ty) (x : INDEX) : option ty :=
+  match T with
+  | Ty_RCons y T1 T2 =>
+    if x =? y then Some T1 else lookup T2 x
+  | Ty_VCons y T1 T2 =>
+    if x =? y then Some T1 else lookup T2 x
+  | _ => None
+  end.
+
+Reserved Notation "T '<:' U" (at level 40).
+Inductive subtype : ty -> ty -> Type :=
+  | S_Refl            T : WellFormed T -> T <: T
+  | S_Bot             T : WellFormed T -> <{{Bot}}> <: T
+  | S_Top             T : WellFormed T -> T <: <{{Top}}>
+  | S_Arrow T1 T2 U1 U2 : T2 <: T1 -> U1 <: U2 -> <{{T1 -> U1}}> <: <{{T2 -> U2}}>
+  | S_Sum   T1 T2 U1 U2 : T1 <: T2 -> U1 <: U2 -> <{{T1 + U1}}> <: <{{T2 + U2}}>
+  | S_Prod  T1 T2 U1 U2 : T1 <: T2 -> U1 <: U2 -> <{{T1 * U1}}> <: <{{T2 * U2}}>
+  | S_List        T1 T2 : T1 <: T2 -> <{{List T1}}> <: <{{List T2}}>
+  | S_Rnil            T :
+    IsRecord T ->
+    WellFormed T ->
+    T <: <{{RNil}}>
+  | S_Rcons x T T' T1 T2 :
+    IsRecord T1 -> WellFormed T1 ->
+    IsRecord T2 -> WellFormed T2 ->
+    lookup T1 x = Some T' ->
+    T' <: T ->
+    T1 <: <{{x:T::T2}}>
+  | S_Vnil            T :
+    IsVariant T ->
+    WellFormed T ->
+    <{{VNil}}> <: T
+  | S_Vcons x T T' T1 T2 :
+    IsVariant T1 -> WellFormed T1 ->
+    IsVariant T2 -> WellFormed T2 ->
+    lookup T2 x = Some T' ->
+    T <: T' ->
+    <{{x:T||T1}}> <: T2
+where "T '<:' U" := (subtype T U).
+Local Hint Constructors subtype : core.
+
+Definition context : Type := map ty.
+Reserved Notation "Gamma '|--' t '\in' T" (at level 40, T custom stlc_ty at level 0).
+Inductive has_type : tm -> ty -> context -> Type :=
+  | T_Var (Gamma : context) (x : INDEX) T : Gamma x = Some T ->
+    Gamma |-- x \in T
+  | T_Abs (Gamma : context) (x : INDEX) T1 T2 t :
+    (x |-> T1; Gamma) |-- t \in T2 ->
+    Gamma |-- tm_abs x T1 t \in (T1 -> T2)
+  | T_App (Gamma : context) T1 T2 t1 t2 :
+    Gamma |-- t1 \in (T1 -> T2) ->
+    Gamma |-- t2 \in T1 ->
+    Gamma |-- tm_app t1 t2 \in T2
+  | T_Elim (Gamma : context) T t :
+    Gamma |-- t \in Empty ->
+    Gamma |-- tm_elim t T \in T
+  | T_Unit Gamma :
+    Gamma |-- tm_unit \in Unit
+  (* write type deduction for every term *)
+  | T_True Gamma :
+    Gamma |-- tm_true \in Bool
+  | T_False Gamma :
+    Gamma |-- tm_false \in Bool
+  | T_Ite Gamma t1 t2 t3 T :
+    Gamma |-- t1 \in Bool ->
+    Gamma |-- t2 \in T ->
+    Gamma |-- t3 \in T ->
+    Gamma |-- tm_ite t1 t2 t3 \in T
+  | T_O Gamma :
+    Gamma |-- tm_O \in Nat
+  | T_S Gamma t :
+    Gamma |-- t \in Nat ->
+    Gamma |-- tm_S t \in Nat
+  | T_Ncase Gamma t1 t2 x t3 T :
+    Gamma |-- t1 \in Nat ->
+    Gamma |-- t2 \in T ->
+    (x |-> <{{Nat}}>; Gamma) |-- t3 \in T ->
+    Gamma |-- tm_Ncase t1 t2 x t3 \in T
+  | T_Nfix Gamma t1 t2 t3 T :
+    Gamma |-- t1 \in Nat ->
+    Gamma |-- t2 \in T ->
+    Gamma |-- t3 \in (Nat -> T -> T) ->
+    Gamma |-- tm_Nfix t1 t2 t3 \in T
+  | T_Inl Gamma T1 T2 t :
+    Gamma |-- t \in T1 ->
+    Gamma |-- tm_inl T2 t \in (T1 + T2)
+  | T_Inr Gamma T1 T2 t :
+    Gamma |-- t \in T2 ->
+    Gamma |-- tm_inr T1 t \in (T1 + T2)
+  | T_Scase Gamma t1 x t2 y t3 T T1 T2 :
+    Gamma |-- t1 \in (T1 + T2) ->
+    (x |-> T1; Gamma) |-- t2 \in T ->
+    (y |-> T2; Gamma) |-- t3 \in T ->
+    Gamma |-- tm_Scase t1 x t2 y t3 \in T
+  | T_Pair Gamma t1 t2 T1 T2 :
+    Gamma |-- t1 \in T1 ->
+    Gamma |-- t2 \in T2 ->
+    Gamma |-- tm_pair t1 t2 \in (T1 * T2)
+  | T_Fst Gamma t T1 T2 :
+    Gamma |-- t \in (T1 * T2) ->
+    Gamma |-- tm_fst t \in T1
+  | T_Snd Gamma t T1 T2 :
+    Gamma |-- t \in (T1 * T2) ->
+    Gamma |-- tm_snd t \in T2
+  | T_Nil Gamma T :
+    Gamma |-- tm_nil T \in List T
+  | T_Cons Gamma t1 t2 T :
+    Gamma |-- t1 \in T ->
+    Gamma |-- t2 \in List T ->
+    Gamma |-- tm_cons t1 t2 \in List T
+  | T_Lcase Gamma t1 t2 x y t3 T :
+    Gamma |-- t1 \in List T ->
+    Gamma |-- t2 \in T ->
+    (x |-> T; y |-> <{{List T}}>; Gamma) |-- t3 \in T ->
+    Gamma |-- tm_Lcase t1 t2 x y t3 \in T
+  | T_Lfix Gamma t1 t2 t3 T U :
+    Gamma |-- t1 \in List T ->
+    Gamma |-- t2 \in U ->
+    Gamma |-- t3 \in (T -> List T -> U -> U) ->
+    Gamma |-- tm_Lfix t1 t2 t3 \in U
+  | T_Rnil Gamma :
+    Gamma |-- tm_rnil \in RNil
+  | T_Rcons Gamma x t1 t2 T1 T2 :
+    IsRecord T2 ->
+    Gamma |-- t1 \in T1 ->
+    Gamma |-- t2 \in T2 ->
+    Gamma |-- tm_rcons x t1 t2 \in (x:T1::T2)
+  | T_Rproj Gamma t x T T1 :
+    IsRecord T ->
+    Gamma |-- t \in T ->
+    lookup T x = Some T1 ->
+    Gamma |-- tm_rproj t x \in T1
+  | T_Vsing Gamma x t T1 T :
+    IsVariant T ->
+    Gamma |-- t \in T1 ->
+    lookup T x = Some T1 ->
+    Gamma |-- tm_vsing x t T1 T \in T
+  (* vhd vcons vtl ??? *)
+  | T_Let Gamma x t1 t2 T1 T2 :
+    Gamma |-- t1 \in T1 ->
+    (x |-> T1; Gamma) |-- t2 \in T2 ->
+    Gamma |-- tm_let x t1 t2 \in T2
+  | T_Fix Gamma t T :
+    Gamma |-- t \in (T -> T) ->
+    Gamma |-- tm_fix t \in T
+  | T_Error Gamma :
+    Gamma |-- tm_error \in Bot
+  | T_Sub Gamma T1 T2 t : T1 <: T2 ->
+    Gamma |-- t \in T1 ->
+    Gamma |-- t \in T2
+where "Gamma '|--' t '\in' T" := (has_type t T Gamma).
+Local Hint Constructors has_type : core.
