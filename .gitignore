@@ -4,8 +4,5 @@
 *.glob
 *.aux
 .lia.cache
-make
 note.txt
-.gitignore
-cp_agda.v
 SubtypeNormCompute.v

@@ -170,3 +170,26 @@ Ltac get_value :=
   |- _ =>
   let HT' := fresh"HT" in assert (HT' := multi_pre _ _ _ H3 H2); clear H2;
   let Hv := fresh"Hv" in assert (Hv := value_if_nf_ty _ _ HT' H1); clear H1 end.
+
+
+Useful self-defined tactics:
+	in deterministic, find value -> _ and inverse.
+	in deterministic,
+Ltac find_contra :=
+  match goal with
+    H1: ?E = true,
+    H2: ?E = false
+    |- _ => congruence
+  end.
+Ltac clear_refl_eq :=
+  match goal with
+    H1: ?E = ?E
+    |- _ => clear H1
+  end.
+Ltac spec_des :=
+  match goal with
+    H1 : forall (res : result) (st : state), ?P res st -> _,
+    H2 : ?P ?st1 ?res1,
+    H3 : ?P ?st0 ?res0
+    |- _ => destruct (H1 _ _ H2); destruct (H1 _ _ H3); clear H1; repeat clear_refl_eq
+  end.
