@@ -13,8 +13,7 @@ Property eqb_eq x y : (x =? y) = true <-> x = y.
 Proof. destruct (eqb_spec x y); split; auto. congruence. Defined.
 Property eqb_neq x y : (x =? y) = false <-> x <> y.
 Proof. destruct (eqb_spec x y); split; auto; congruence. Defined.
-#[export]
-Hint Resolve eqb_eq eqb_neq : core.
+Global Hint Resolve eqb_eq eqb_neq : core.
 
 Definition map (A : Type) : Type := INDEX -> option A.
 Definition empty {A : Type} : map A := fun _ => None.
@@ -39,11 +38,10 @@ Fact mapeq_sym {A} (f g : map A) : f ~ g -> g ~ f.
 Proof. congruence. Defined.
 Fact mapeq_trans {A} (f g h : map A) : f ~ g -> g ~ h -> f ~ h.
 Proof. congruence. Defined.
-Fact mapeq_cong {A} {f g : map A} {x} {v} :
+Fact mapeq_cong {A} (f g : map A) x v :
   f ~ g -> (x |-> v; f) ~ (x |-> v; g).
 Proof. intros H x0. repeat unfolds. destruct (x =? x0); auto. Defined.
-#[export]
-Hint Resolve eq_to_mapeq mapeq_refl mapeq_sym : core.
+Global Hint Resolve eq_to_mapeq mapeq_refl mapeq_sym : core.
 
 Property update_shadow A (m : map A) x v1 v2 :
   (x |-> v2 ; x |-> v1 ; m) ~ (x |-> v2 ; m).

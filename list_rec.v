@@ -27,3 +27,36 @@ Fixpoint sz {A : Set} (t : tree A) : nat :=
 	end.
 
 Print sz.
+
+Lemma endPt {A : Type} {x y : A} {P : A -> Type} : x = y -> P x -> P y.
+Proof.
+	intros. subst. auto.
+Qed.
+
+Axiom FF : forall {X : Type}, X.
+
+(* Axioms (A : Set) (P : tree A -> Prop)
+	(rec : forall (a : A)(l : list (tree A)), (forall x, In x l -> P x) -> P (node A a l)).
+Check @list_rec (tree A) (fun l => forall x, In x l -> P x) (fun _ contra => match contra with end)
+(fun a l IH x p => match p with or_introl eq => endPt eq _ | or_intror HIn => IH _ HIn end). *)
+
+Fixpoint tree_ind'' (A : Set) (P : tree A -> Prop)
+	(rec : forall (a : A)(l : list (tree A)), (forall x, In x l -> P x) -> P (node A a l)) (t : tree A) : P t :=
+	match t with
+	| node _ a l =>
+		rec a l (@list_rec (tree A) (fun l => forall x, In x l -> P x) (fun _ contra => match contra with end)
+(fun a l IH x p => match p with or_introl eq => endPt eq (tree_ind' A P rec a) | or_intror HIn => IH _ HIn end) l)
+	end.
+
+Fixpoint tree_ind' (A : Set) (P : tree A -> Prop)
+	(rec : forall (a : A)(l : list (tree A)), (forall x, In x l -> P x) -> P (node A a l)) (t : tree A) {struct t} : P t.
+Proof.
+	destruct t.
+	apply rec.
+	intros.
+	destruct l.
+	- destruct H.
+	- destruct H; subst.
+		+ apply tree_ind'. eauto.
+		+ apply tree_ind'. eauto.
+Defined.
