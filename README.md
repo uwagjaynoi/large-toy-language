@@ -1,5 +1,9 @@
 Just an version update list.
 
+0719: norm1
+
+0717~18: 删除了大部分, 现在决定只写 Normalizing progress, preservation
+
 0716: step(error) subtype has_type
 
 0715: ty tm subst value step

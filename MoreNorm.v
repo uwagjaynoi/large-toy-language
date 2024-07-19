@@ -451,6 +451,228 @@ Proof.
   eauto using subst_type.
 Defined.
 
+Inductive multi {X : Type} (R : crelation X) : crelation X :=
+  | multi_refl x : multi R x x
+  | multi_step x y z : R x y -> multi R y z -> multi R x z.
+Hint Constructors multi : core.
+
+Fact multi_R (X : Type) (R : crelation X) x y : R x y -> multi R x y.
+Proof. eauto. Defined.
+
+Theorem multi_trans (X : Type) (R : crelation X) x y z :
+  multi R x y -> multi R y z -> multi R x z.
+Proof.
+  intros G; induction G; eauto.
+Defined.
+
+Notation " t '-->*' t' " := (multi step t t') (at level 40).
+Definition normal t := forall t', t --> t' -> False.
+Hint Unfold normal : core.
+(* Hint Immediate term : idents …. *)
+
+Property value__normal : forall t, value t -> normal t.
+Proof.
+  induction t; unfold normal in *;
+  intros Hv t' HS; inverts Hv; inverts HS; eauto.
+Defined.
+
+Lemma determinism t t1 t2 :
+  t --> t1 ->
+  t --> t2 ->
+  t1 = t2.
+Proof.
+  intros HS1; gen t2.
+  induction HS1; intros ? HS2; inverts HS2; eauto;
+  try solve[f_equal; eauto];
+  try match goal with
+    | Hv : value ?t, HS : ?t --> _ |- _ =>
+    false; apply (value__normal _ Hv _ HS)
+    | HS : ?t --> _ |- _ =>
+    solve [false; assert (Hv : value t); [eauto | apply (value__normal _ Hv _ HS)]]
+  end.
+Defined.
+
+Fact normal_multi__refl t1 t2 : normal t1 -> t1 -->* t2 -> t1 = t2.
+Proof.
+  intros Hnf HM; inverts HM; [eauto| exfalso; eauto].
+Defined.
+
+Property multi_preservation t1 t2 T :
+  t1 -->* t2 ->
+  empty |-- t1 \in T ->
+  empty |-- t2 \in T.
+Proof.
+  intros HM; induction HM; eauto using preservation.
+Defined.
+
+Property step_multi_diamond t t1 t2 :
+  t --> t1 -> t -->* t2 -> normal t2 ->
+  t1 -->* t2.
+Proof.
+  intros HS HM Hnf. inverts HM; try solve[false; eauto].
+  eapply determinism in HS; eauto. rewrite <- HS. auto.
+Defined.
+
+Definition halt t := exists t', t -->* t' /\ normal t'.
+Hint Transparent halt : core.
+Hint Unfold halt : core.
+
+Property halt_back t t' :
+  t --> t' ->
+  halt t' ->
+  halt t.
+Proof.
+  intros ? (? & ? & ?); eauto.
+Defined.
+
+Property halt_forward t t' :
+  t --> t' ->
+  halt t ->
+  halt t'.
+Proof.
+  intros ? (? & ? & ?). eauto using step_multi_diamond.
+Defined.
+
+Fixpoint strong_norm (t : tm) (T : ty) : Type :=
+  match T with
+  | Ty_Arrow T1 T2 => halt t  /\
+    forall t1, empty |-- t1 \in T1 -> strong_norm t1 T1 ->
+    strong_norm (tm_app t t1) T2
+  | Ty_Empty => False
+  | Ty_Unit => halt t
+  | Ty_Sum T1 T2 => halt t /\
+    (forall t1, t -->* tm_inl T2 t1
+    -> normal t1
+    -> strong_norm t1 T1) /\
+    (forall t2, t -->* tm_inr T1 t2
+    -> normal t2
+    -> strong_norm t2 T2)
+  | Ty_Prod T1 T2 =>
+    strong_norm (tm_fst t) T1 /\
+    strong_norm (tm_snd t) T2
+  | Ty_List T => halt t
+  end.
+
+Lemma strong_norm_back T :
+  forall t t', t --> t' ->
+  strong_norm t' T ->
+  strong_norm t T.
+Proof.
+  induction T; intros t t' HS; simpl.
+  - (* arrow *)
+    intros [Hh Hs]; split;
+    eauto using halt_back.
+  - (* empty *) auto.
+  - (* unit *) eauto using halt_back.
+  - (* sum *)
+    intros [Hh [Hs1 Hs2]]; repeat split; eauto using halt_back.
+    + intros t1 HM Hnf. apply Hs1; auto.
+      eapply step_multi_diamond; eauto.
+      intros t3 HS3. inverts HS3.
+      eauto.
+    + intros t2 HM Hnf. apply Hs2; auto.
+      eapply step_multi_diamond; eauto.
+      intros t3 HS3. inverts HS3.
+      eauto.
+  - (* prod *)
+    intros [Hs1 Hs2]; split; eauto.
+  - (* list *) (* WRONG!!! *)
+    eauto using halt_back.
+Defined.
+
+Lemma strong_norm_forward T :
+  forall t t', t --> t' ->
+  strong_norm t T ->
+  strong_norm t' T.
+Proof.
+  induction T; intros t t' HS; simpl.
+  - (* arrow *)
+    intros [Hh Hs]; split;
+    eauto using halt_forward.
+  - (* empty *) auto.
+  - (* unit *) eauto using halt_forward.
+  - (* sum *)
+    intros [Hh [Hs1 Hs2]]; repeat split; eauto using halt_forward.
+  - (* prod *)
+    intros [Hs1 Hs2]; split; eauto.
+  - (* list *) (* WRONG!!! *)
+    eauto using halt_forward.
+
+
+Corollary has_type__halt t T :
+  empty |-- t \in T -> halt t.
+Admitted.
+
+(* Computing *)
+Definition pp_progress t T (H : empty |-- t \in T) :
+  option tm :=
+  match progress _ _ H with
+  | inl _ => None
+  | inr (existT _ t' _) => Some t'
+  end.
+
+Require Import List.
+Import ListNotations.
+Fixpoint simp_list t1 t2 (H : t1 -->* t2) : list tm :=
+  match H with
+  | multi_refl _ _ => [t2]
+  | multi_step _ _ _ t1' t2' H' => t1 :: simp_list _ _ H'
+  end.
+
+Fixpoint simp_cor (l : list tm) : Type :=
+  match l with
+  | [] => True
+  | (t1 :: l') =>
+    match l' with
+    | [] => True
+    | (t2 :: l'') => t1 --> t2 /\ simp_cor l'
+    end
+  end.
+
+Property simp_COR t1 t2 (H : t1 -->* t2) : simp_cor (simp_list _ _ H).
+Proof.
+  enough (H1 : simp_cor (simp_list _ _ H) /\ match simp_list _ _ H with | [] => False | (x :: _) => x = t1 end). {destruct H1. eauto. }
+  induction H; simpl; try split; eauto.
+  destruct IHmulti, (simp_list y z H); subst; try split; eauto.
+Defined.
+
+Check prod.
+Locate "*".
+Locate "( x , y )".
+
+Definition compute_list t T :
+  empty |-- t \in T -> list tm :=
+  fun HT => match has_type__halt _ _ HT with
+  | existT _ t' (pair HM Hnf) => simp_list _ _ HM
+  end.
+
 End STLC.
 
 Check progress.
+
+Import Nat.
+Theorem my_eqb_spec (x y : nat) : reflect (x = y) (x =? y).
+Proof.
+  gen y. induction x.
+  - intros []; simpl; constructor; congruence.
+  - intros []; simpl.
+    + constructor. congruence.
+    + destruct (IHx n); constructor; congruence.
+Defined.
+
+Arguments tm_app {INDEX}.
+Arguments tm_abs {INDEX}.
+Arguments tm_var {INDEX}.
+Arguments tm_unit {INDEX}.
+Definition eg : has_type nat eqb
+  (tm_app
+    (tm_app
+      (tm_app (tm_abs 0 (Ty_Arrow Ty_Unit Ty_Unit) (tm_abs 1 (Ty_Arrow Ty_Unit Ty_Unit) (tm_abs 2 Ty_Unit (tm_app (tm_var 0) (tm_app (tm_var 1) (tm_var 2)))))) (tm_abs 3 Ty_Unit (tm_var 3)))
+      (tm_abs 3 Ty_Unit tm_unit))
+    tm_unit)
+  Ty_Unit  (empty _).
+Proof.
+  repeat (try reflexivity; econstructor).
+Defined.
+
+Compute (compute_list _ _ my_eqb_spec _ _ eg).
