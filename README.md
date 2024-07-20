@@ -1,6 +1,8 @@
 Just an version update list.
 
-0719: norm1
+0720: 部分arrow, sum, prod
+
+0719: empty, unit, 部分arrow
 
 0717~18: 删除了大部分, 现在决定只写 Normalizing progress, preservation
 

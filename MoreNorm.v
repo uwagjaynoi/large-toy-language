@@ -372,6 +372,20 @@ Proof.
   discriminate.
 Defined.
 
+Ltac eq_case :=
+  match goal with
+  | |- _ |-- (if ?x =? ?y then _ else _) \in _ =>
+    destruct (eqb_spec x y); subst
+  | H : (?s |-> _ ; _) ?s = Some _ |- _ =>
+    rewrite update_eq in H; inverts H
+  | H : (?s |-> _ ; _) ?t = _,
+    H2 : ?s <> ?t |- _ =>
+    rewrite update_neq in H
+  | H : (?s |-> _ ; _) ?t = _,
+    H2 : ?t <> ?s |- _ =>
+    rewrite update_neq in H
+  end.
+
 Theorem subst_type x U v :
   empty |-- v \in U -> forall t Gamma T,
   (x |-> U ; Gamma) |-- t \in T ->
@@ -389,19 +403,6 @@ Proof.
     | Hequ : G ~ _,
       Heq : G _ = _ |- _ =>
       rewrite Hequ in Heq
-    end.
-  Ltac eq_case :=
-    repeat match goal with
-    | |- _ |-- (if ?x =? ?y then _ else _) \in _ =>
-      destruct (eqb_spec x y); subst ; eauto using weaken_empty
-    | H : (?s |-> _ ; _) ?s = Some _ |- _ =>
-      rewrite update_eq in H; inverts H; eauto using weaken_empty
-    | H : (?s |-> _ ; _) ?t = _,
-      H2 : ?s <> ?t |- _ =>
-      rewrite update_neq in H; eauto using weaken_empty
-    | H : (?s |-> _ ; _) ?t = _,
-      H2 : ?t <> ?s |- _ =>
-      rewrite update_neq in H; eauto using weaken_empty
     end.
   Ltac enough_cong :=
     match goal with
@@ -424,7 +425,7 @@ Proof.
   induction HT;
   intros Gamma' Heq; subst_context Gamma;
   simpl; eauto;
-  try econstructor; eauto; eq_case; enough_cong; try subst_cong;
+  try econstructor; eauto; repeat (eq_case; eauto using weaken_empty); enough_cong; try subst_cong;
   eauto using update_shadow, update_permute, mapeq_cong.
   - (* list ABA=AB *)
     unfold update. intros z.
@@ -536,20 +537,24 @@ Defined.
 Fixpoint strong_norm (t : tm) (T : ty) : Type :=
   match T with
   | Ty_Arrow T1 T2 => halt t  /\
-    forall t1, empty |-- t1 \in T1 -> strong_norm t1 T1 ->
+    forall t1,
+    empty |-- t1 \in T1 ->
+    strong_norm t1 T1 ->
     strong_norm (tm_app t t1) T2
   | Ty_Empty => False
   | Ty_Unit => halt t
   | Ty_Sum T1 T2 => halt t /\
-    (forall t1, t -->* tm_inl T2 t1
-    -> normal t1
-    -> strong_norm t1 T1) /\
-    (forall t2, t -->* tm_inr T1 t2
-    -> normal t2
-    -> strong_norm t2 T2)
+    (forall t1, t -->* tm_inl T2 t1 ->
+    normal t1 ->
+    strong_norm t1 T1) /\
+    (forall t2, t -->* tm_inr T1 t2 ->
+    normal t2 ->
+    strong_norm t2 T2)
   | Ty_Prod T1 T2 =>
-    strong_norm (tm_fst t) T1 /\
-    strong_norm (tm_snd t) T2
+    halt t /\
+    (forall t1 t2, t -->* tm_pair t1 t2 ->
+    normal t1 -> normal t2 ->
+    strong_norm t1 T1 /\ strong_norm t2 T2)
   | Ty_List T => halt t
   end.
 
@@ -575,7 +580,13 @@ Proof.
       intros t3 HS3. inverts HS3.
       eauto.
   - (* prod *)
-    intros [Hs1 Hs2]; split; eauto.
+    intros [Hh Hs]. split; eauto using halt_back.
+    introv HM Hnf1 Hnf2; apply Hs; eauto.
+    assert (Hnf : normal (tm_pair t1 t2)).
+    {
+      intros t3 HS3. inverts HS3; eauto.
+    }
+    eauto using step_multi_diamond.
   - (* list *) (* WRONG!!! *)
     eauto using halt_back.
 Defined.
@@ -594,14 +605,454 @@ Proof.
   - (* sum *)
     intros [Hh [Hs1 Hs2]]; repeat split; eauto using halt_forward.
   - (* prod *)
-    intros [Hs1 Hs2]; split; eauto.
+    intros [Hh Hs]; split; eauto using halt_forward.
   - (* list *) (* WRONG!!! *)
     eauto using halt_forward.
+Defined.
 
+Corollary strong_norm_multi_back T :
+  forall t t', t -->* t' ->
+  strong_norm t' T ->
+  strong_norm t T.
+Proof.
+  introv HM; induction HM; eauto using strong_norm_back.
+Defined.
+
+Corollary strong_norm_multi_forward T :
+  forall t t', t -->* t' ->
+  strong_norm t T ->
+  strong_norm t' T.
+Proof.
+  introv HM; induction HM; eauto using strong_norm_forward.
+Defined.
+
+Proposition strong_norm__halt T :
+  forall t, strong_norm t T -> halt t.
+Proof.
+  induction T; simpl; intros t Hs; intuition.
+Defined.
+
+Definition contextv := list (INDEX * (tm * ty)).
+Fixpoint to_context (l : contextv) : context :=
+  match l with
+  | nil => empty
+  | cons (x,t,T) l' => x|->T; to_context l'
+  end
+.
+Inductive close : contextv -> Type :=
+  | closen : close nil
+  | closec x t T G : close G -> empty |-- t \in T -> strong_norm t T -> close (cons (x,t,T) G)
+.
+Fixpoint substm (l : contextv) (t : tm) : tm :=
+  match l with
+  | nil => t
+  | cons (x,t',_) l' => substm l' <{[x:=t']t}>
+  end
+.
+Notation "[/ l ] t" := (substm l t) (in custom stlc at level 20, l constr).
+
+Fact wt_subst_eq t :
+  forall Gamma T x t',
+  Gamma |-- t \in T ->
+  Gamma x = None ->
+  <{[x:=t']t}> = t.
+Proof.
+  Ltac remove_eq :=
+    match goal with
+    | |- (if ?x =? ?y then _ else _) = _ =>
+      destruct (eqb_spec x y); [subst |
+        assert (forall (Gamma : context) t, Gamma y = None -> (x |-> t; Gamma) y = None);
+        [intros; rewrite update_neq; eauto | eauto]
+      ]
+    end.
+  induction t; introv HT Heq; simpl; inverts HT; eauto;
+  f_equal ; repeat remove_eq; eauto.
+  congruence.
+Defined.
+
+Corollary wt_substm_eq (Gamma' : contextv) :
+  forall t Gamma T, Gamma |-- t \in T ->
+  (forall x t1 T1, Lists.List.In (x,t1,T1) Gamma' -> Gamma x = None) ->
+  substm Gamma' t = t.
+Proof.
+  induction Gamma' as [|[x [t1 T1]] ?]; intros; simpl in *; eauto.
+  erewrite wt_subst_eq; eauto.
+Defined.
+
+Lemma var_case Gammav x T :
+  (to_context Gammav) x = Some T ->
+  close Gammav ->
+  strong_norm (substm Gammav (tm_var x)) T.
+Proof.
+  induction Gammav; simpl; try discriminate.
+  destruct a as (x1 & t & T1).
+  intros Heq Hc. inverts Hc.
+  destruct (eqb_spec x x1); subst; eq_case; eauto.
+  erewrite wt_substm_eq; eauto.
+Defined.
+
+Fixpoint filter_out (x : INDEX) (l : contextv) : contextv :=
+  match l with
+  | nil => nil
+  | cons (x',t,T) l' => if x =? x' then filter_out x l' else cons (x',t,T) (filter_out x l')
+  end
+.
+
+Proposition substm_abs : forall x T1 Gammav t,
+  substm Gammav (tm_abs x T1 t) = tm_abs x T1 (substm (filter_out x Gammav) t).
+Proof.
+  induction Gammav as [|[x' [t' T']] ?]; simpl; intros; eauto.
+  rewrite IHGammav. f_equal. destruct (eqb_spec x x'); subst; eauto.
+Defined.
+
+Fact value__halt t : value t -> halt t.
+Proof.
+  intros Hv. exists t; eauto using value__normal.
+Defined.
+
+Fact app_cong2 : forall v1 t2 t2',
+  value v1 ->
+  t2 -->* t2' ->
+  tm_app v1 t2 -->* tm_app v1 t2'.
+Proof.
+  introv Hv HM. induction HM; eauto.
+Defined.
+
+Property normal_wt__value t T :
+  normal t -> empty |-- t \in T -> value t.
+Proof.
+  intros Hnf HT. destruct (progress _ _ HT); eauto.
+  destruct s; false; eauto.
+Defined.
+
+Lemma subst_shadow : forall x t1 t2, <{[x:=t1]t2}> = t2 -> forall t, <{[x:=t1]([x:=t2]t)}> = <{[x:=t2]t}>.
+  induction t; simpl; f_equal; eauto;
+  repeat match goal with |- context [?x =? ?y] => destruct (eqb_spec x y); subst; simpl; eauto; try congruence end.
+Defined.
+
+Lemma subst_permute : forall x1 x2 t1 t2, x1 <> x2 -> <{[x1:=t1]t2}> = t2 -> <{[x2:=t2]t1}> = t1 -> forall t, <{[x1:=t1]([x2:=t2]t)}> = <{[x2:=t2]([x1:=t1]t)}>.
+  introv Hneq Heq1 Heq2.
+  induction t; simpl; eauto;
+  repeat match goal with
+  | |- context [?x =? ?y] => destruct (eqb_spec x y); subst; simpl; eauto
+  | |- _ => congruence
+  end.
+Defined.
+
+Theorem substm_subst : forall Gammav x t1 T t,
+  close Gammav ->
+  empty |-- t1 \in T ->
+  <{[x:=t1]([/filter_out x Gammav]t)}> = <{[/Gammav]([x:=t1]t)}>.
+Proof.
+  induction Gammav as [|[x' [t' T']]?]; intros; simpl; eauto.
+  inverts X.
+  destruct (eqb_spec x x'); subst.
+  - erewrite IHGammav; eauto.
+    f_equal. symmetry. eapply subst_shadow.
+    eapply wt_subst_eq; eauto.
+  - simpl. erewrite IHGammav; eauto.
+    f_equal. eapply subst_permute; eauto using wt_subst_eq.
+Defined.
+
+Lemma substm_wt t Gammav T :
+  (to_context Gammav) |-- t \in T ->
+  close Gammav ->
+  empty |-- <{[/Gammav]t}> \in T.
+Proof.
+  gen t T.
+  induction Gammav as [|[x [t1 T1]] ?]; simpl; eauto.
+  intros t T HT Hc. inverts Hc.
+  eauto using subst_type.
+Defined.
+
+Proposition substm_app Gammav :
+  forall t1 t2,
+  substm Gammav (tm_app t1 t2) = tm_app (substm Gammav t1) (substm Gammav t2).
+Proof.
+  induction Gammav as [|[x [t T]] ?]; simpl; eauto.
+Defined.
+
+Proposition substm_inl Gammav :
+  forall T t,
+  substm Gammav (tm_inl T t) = tm_inl T (substm Gammav t).
+Proof.
+  induction Gammav as [|[x [t T]] ?]; simpl; eauto.
+Defined.
+
+Proposition substm_inr Gammav :
+  forall T t,
+  substm Gammav (tm_inr T t) = tm_inr T (substm Gammav t).
+Proof.
+  induction Gammav as [|[x [t T]] ?]; simpl; eauto.
+Defined.
+
+Proposition substm_pair Gammav :
+  forall t1 t2,
+  substm Gammav (tm_pair t1 t2) = tm_pair (substm Gammav t1) (substm Gammav t2).
+Proof.
+  induction Gammav as [|[x [t T]] ?]; simpl; eauto.
+Defined.
+
+Proposition substm_fst Gammav :
+  forall t,
+  substm Gammav (tm_fst t) = tm_fst (substm Gammav t).
+Proof.
+  induction Gammav as [|[x [t T]] ?]; simpl; eauto.
+Defined.
+
+Proposition substm_snd Gammav :
+  forall t,
+  substm Gammav (tm_snd t) = tm_snd (substm Gammav t).
+Proof.
+  induction Gammav as [|[x [t T]] ?]; simpl; eauto.
+Defined.
+
+Proposition halt__inl_halt t T :
+  halt t -> halt (tm_inl T t).
+Proof.
+  intros [t' [HM Hnf]]. induction HM.
+  - exists (tm_inl T x); split; eauto. intros t' HS. inverts HS. eauto.
+  - apply IHHM in Hnf. gen Hnf. apply halt_back. auto.
+Defined.
+
+Proposition halt__inr_halt t T :
+  halt t -> halt (tm_inr T t).
+Proof.
+  intros [t' [HM Hnf]]. induction HM.
+  - exists (tm_inr T x); split; eauto. intros t' HS. inverts HS. eauto.
+  - apply IHHM in Hnf. gen Hnf. apply halt_back. auto.
+Defined.
+
+Proposition inl_multistep_elim t t' T :
+  tm_inl T t -->* t' ->
+  exists t'', t' = tm_inl T t'' /\ t -->* t''.
+Proof.
+  remember (tm_inl T t) as lt.
+  intros HM.
+  gen t. induction HM; intros; subst; eauto.
+  inverts r. edestruct IHHM as (t'' & Heq & HM2); eauto.
+Defined.
+
+Proposition inr_multistep_elim t t' T :
+  tm_inr T t -->* t' ->
+  exists t'', t' = tm_inr T t'' /\ t -->* t''.
+Proof.
+  remember (tm_inr T t) as lt.
+  intros HM.
+  gen t. induction HM; intros; subst; eauto.
+  inverts r. edestruct IHHM as (t'' & Heq & HM2); eauto.
+Defined.
+
+Proposition pair_multistep_elim t1 t2 t1' t2' :
+  tm_pair t1 t2 -->* tm_pair t1' t2' ->
+  t1 -->* t1' /\ t2 -->* t2'.
+Proof.
+  remember (tm_pair t1 t2) as t.
+  remember (tm_pair t1' t2') as t'.
+  intros HM.
+  gen t1 t2 t1' t2'. induction HM; intros; subst; eauto.
+  - inverts Heqt'; eauto.
+  - inverts r; destruct (IHHM _ _ eq_refl _ _ eq_refl); eauto.
+Defined.
+
+
+Proposition substm_Scase Gammav :
+  forall t1 x t2 y t3,
+  substm Gammav (tm_Scase t1 x t2 y t3) = tm_Scase (substm Gammav t1) x (substm (filter_out x Gammav) t2) y (substm (filter_out y Gammav) t3).
+Proof.
+  induction Gammav as [|[x' [t' T']] ?]; intros; simpl; eauto.
+  rewrite IHGammav; f_equal.
+  - destruct (x =? x'); reflexivity.
+  - destruct (y =? x'); reflexivity.
+Defined.
+
+Proposition Scase_cong1 t1 t1' x t2 y t3 :
+  t1 -->* t1' ->
+  tm_Scase t1 x t2 y t3 -->* tm_Scase t1' x t2 y t3.
+Proof.
+  intros HM. induction HM; eauto.
+Defined.
+
+Proposition pair_cong t1 t1' t2 t2' :
+  t1 -->* t1' ->
+  value t1' ->
+  t2 -->* t2' ->
+  tm_pair t1 t2 -->* tm_pair t1' t2'.
+Proof.
+  intros.
+  eapply multi_trans with (tm_pair t1' t2).
+  - clear X0 X1. induction X; eauto.
+  - induction X1; eauto.
+Defined.
+
+Proposition fst_cong t t' :
+  t -->* t' ->
+  tm_fst t -->* tm_fst t'.
+Proof.
+  intros HM; induction HM; eauto.
+Defined.
+
+Proposition snd_cong t t' :
+  t -->* t' ->
+  tm_snd t -->* tm_snd t'.
+Proof.
+  intros HM; induction HM; eauto.
+Defined.
+
+Theorem has_type__strong_norm t Gamma T :
+  (to_context Gamma) |-- t \in T ->
+  close Gamma ->
+  strong_norm <{[/Gamma]t}> T.
+Proof.
+  introv HT. remember (to_context Gamma) as G. gen Gamma.
+  induction HT; intros Gv Heq Hc; subst; simpl.
+  - (* var *) eauto using var_case.
+  - (* abs *) split.
+    + rewrite substm_abs. eauto using value__halt.
+    + intros t1 HT1 Hs.
+      destruct (strong_norm__halt _ _ Hs) as (t1' & HM & Hnf).
+      specializes IHHT (cons (x,t1',T1) Gv) ___.
+      * constructor; eauto using multi_preservation, strong_norm_multi_forward.
+      * simpl in IHHT. gen IHHT.
+        eapply (strong_norm_multi_back); eauto.
+        rewrite substm_abs.
+        eapply multi_trans.
+        -- eapply app_cong2; eauto.
+        -- eapply multi_R.
+           erewrite <- substm_subst; eauto using normal_wt__value, multi_preservation.
+  - (* app *)
+    specializes IHHT1 Hc ___. simpl in IHHT1.
+    destruct IHHT1 as [(t1' & HM & Hnf) IH12].
+    specializes IHHT2 Hc ___. specializes IH12 IHHT2.
+    + eauto using substm_wt.
+    + rewrite substm_app. eauto.
+  - (* elim *) false. simpl in IHHT. eauto.
+  - (* unit *) apply value__halt.
+    induction Gv as [|[? [? ?]] ?]; simpl in *; eauto.
+    inverts Hc; eauto.
+  - (* inl *) rewrite substm_inl. repeat split.
+    + apply halt__inl_halt.
+      eapply strong_norm__halt. eauto.
+    + intros. apply inl_multistep_elim in X.
+      destruct X as (t'' & Heq & HM).
+      inverts Heq.
+      specializes IHHT; eauto. gen IHHT.
+      eapply strong_norm_multi_forward; eauto.
+    + intros. apply inl_multistep_elim in X.
+      destruct X as (t'' & Heq & HM).
+      discriminate.
+  - (* inr *) rewrite substm_inr. repeat split.
+    + apply halt__inr_halt.
+      eapply strong_norm__halt. eauto.
+    + intros. apply inr_multistep_elim in X.
+      destruct X as (t'' & Heq & HM).
+      discriminate.
+    + intros. apply inr_multistep_elim in X.
+      destruct X as (t'' & Heq & HM).
+      inverts Heq.
+      specializes IHHT; eauto. gen IHHT.
+      eapply strong_norm_multi_forward; eauto.
+  - (* Scase *) rewrite substm_Scase.
+    specializes IHHT1; eauto.
+    lets (t' & HM & Hnf) : strong_norm__halt IHHT1.
+    assert (HT : empty |-- t' \in (T1 + T2)).
+    {
+      eapply multi_preservation; eauto.
+      eapply substm_wt; eauto.
+    }
+    assert (Hv : value t').
+    {
+      eauto using normal_wt__value.
+    }
+    inverts HT; inverts Hv.
+    + specializes IHHT2 (cons (x,t,T1) Gv) ___.
+      * constructor; eauto.
+        destruct IHHT1 as [_ [IH _]].
+        specializes IH HM.
+        eauto using value__normal.
+      * simpl in IHHT2. erewrite <-substm_subst in IHHT2; eauto. gen IHHT2.
+        eapply strong_norm_multi_back; eauto.
+        eapply multi_trans with (tm_Scase (tm_inl T2 t) x <{ [/filter_out x Gv] t2 }> y <{ [/filter_out y Gv] t3 }>).
+        -- apply Scase_cong1. auto.
+        -- apply multi_R. constructor. auto.
+    + specializes IHHT3 (cons (y,t,T2) Gv) ___.
+      * constructor; eauto.
+        destruct IHHT1 as [_ [_ IH]].
+        specializes IH HM.
+        eauto using value__normal.
+      * simpl in IHHT3. erewrite <-substm_subst in IHHT3; eauto. gen IHHT3.
+        eapply strong_norm_multi_back; eauto.
+        eapply multi_trans with (tm_Scase (tm_inr T1 t) x <{ [/filter_out x Gv] t2 }> y <{ [/filter_out y Gv] t3 }>).
+        -- apply Scase_cong1. auto.
+        -- apply multi_R. constructor. auto.
+  - (* pair *) rewrite substm_pair.
+    specializes IHHT1; eauto.
+    specializes IHHT2; eauto.
+    lets (t1' & HM1 & Hnf1) : strong_norm__halt IHHT1.
+    lets (t2' & HM2 & Hnf2) : strong_norm__halt IHHT2.
+    split.
+    + exists (tm_pair t1' t2'); split; eauto.
+      * assert (Hv : value t1').
+        {
+          eapply normal_wt__value; eauto.
+          eapply multi_preservation; eauto.
+          eapply substm_wt; eauto.
+        }
+        eapply pair_cong; eauto.
+      * intros t3 HS3. inverts HS3; eauto.
+    + intros. apply pair_multistep_elim in X.
+      destruct X. eauto using strong_norm_multi_forward.
+  - (* fst *) rewrite substm_fst.
+    specializes IHHT; eauto. simpl in IHHT.
+    destruct IHHT as [[t' [HM Hnf]] IH].
+    assert (HT' : empty |-- t' \in (T1 * T2)).
+    {
+      eapply multi_preservation; eauto.
+      eapply substm_wt; eauto.
+    }
+    assert (Hv : value t').
+    {
+      eauto using normal_wt__value.
+    }
+    inverts HT'; inverts Hv.
+    specializes IH ___; eauto using value__normal.
+    destruct IH as [IH _]. gen IH.
+    apply strong_norm_multi_back; eauto.
+    eapply multi_trans with (tm_fst (tm_pair t1 t2)).
+    + eapply fst_cong; eauto.
+    + apply multi_R. constructor; auto.
+  - (* snd *) rewrite substm_snd.
+    specializes IHHT; eauto. simpl in IHHT.
+    destruct IHHT as [[t' [HM Hnf]] IH].
+    assert (HT' : empty |-- t' \in (T1 * T2)).
+    {
+      eapply multi_preservation; eauto.
+      eapply substm_wt; eauto.
+    }
+    assert (Hv : value t').
+    {
+      eauto using normal_wt__value.
+    }
+    inverts HT'; inverts Hv.
+    specializes IH ___; eauto using value__normal.
+    destruct IH as [_ IH]. gen IH.
+    apply strong_norm_multi_back; eauto.
+    eapply multi_trans with (tm_snd (tm_pair t1 t2)).
+    + eapply snd_cong; eauto.
+    + apply multi_R. constructor; auto.
+  - (* nil *) admit.
+  - (* cons *) admit.
+  - (* Lcase *) admit.
+  - (* Lfix *) admit.
+  - (* let *) admit.
+Admitted.
 
 Corollary has_type__halt t T :
   empty |-- t \in T -> halt t.
-Admitted.
+Proof.
+  intros HT. eapply strong_norm__halt;
+  eapply has_type__strong_norm with (Gamma := nil); eauto. constructor.
+Defined.
 
 (* Computing *)
 Definition pp_progress t T (H : empty |-- t \in T) :
@@ -635,10 +1086,6 @@ Proof.
   induction H; simpl; try split; eauto.
   destruct IHmulti, (simp_list y z H); subst; try split; eauto.
 Defined.
-
-Check prod.
-Locate "*".
-Locate "( x , y )".
 
 Definition compute_list t T :
   empty |-- t \in T -> list tm :=
