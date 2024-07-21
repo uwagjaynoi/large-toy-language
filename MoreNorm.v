@@ -1,5 +1,6 @@
 Require Import Bool.Bool.
 Require Import Classes.CEquivalence.
+Require Import List. Import ListNotations.
 Require Classes.CMorphisms.
 From Lambda Require Import LibTactics.
 Set Default Goal Selector "!".
@@ -231,7 +232,7 @@ Inductive step : tm -> tm -> Type :=
   | ST_LcaseCons v1 v2 t2 x y t3 :
     value v1 ->
     value v2 ->
-    tm_Lcase (tm_cons v1 v2) t2 x y t3 --> <{[y:=v2][x:=v1]t3}>
+    tm_Lcase (tm_cons v1 v2) t2 x y t3 --> <{[y:=v2]([x:=v1]t3)}>
   | ST_Lfix1 t1 t1' t2 t3 :
     t1 --> t1' ->
     tm_Lfix t1 t2 t3 --> tm_Lfix t1' t2 t3
@@ -534,9 +535,13 @@ Proof.
   intros ? (? & ? & ?). eauto using step_multi_diamond.
 Defined.
 
+Inductive ForallT {A : Type} (P : A -> Type) : list A -> Type :=
+  | ForallT_nil : ForallT P nil
+  | ForallT_cons x l : P x -> ForallT P l -> ForallT P (x :: l).
+
 Fixpoint strong_norm (t : tm) (T : ty) : Type :=
   match T with
-  | Ty_Arrow T1 T2 => halt t  /\
+  | Ty_Arrow T1 T2 => halt t /\
     forall t1,
     empty |-- t1 \in T1 ->
     strong_norm t1 T1 ->
@@ -550,13 +555,22 @@ Fixpoint strong_norm (t : tm) (T : ty) : Type :=
     (forall t2, t -->* tm_inr T1 t2 ->
     normal t2 ->
     strong_norm t2 T2)
-  | Ty_Prod T1 T2 =>
-    halt t /\
+  | Ty_Prod T1 T2 => halt t /\
     (forall t1 t2, t -->* tm_pair t1 t2 ->
     normal t1 -> normal t2 ->
     strong_norm t1 T1 /\ strong_norm t2 T2)
-  | Ty_List T => halt t
+  | Ty_List T => halt t /\
+    (forall (lt : list tm), t -->* List.fold_right tm_cons (tm_nil T) lt -> ForallT normal lt -> ForallT (fun t => strong_norm t T) lt)
   end.
+
+Fact normal_foldr__normal lt T :
+  ForallT normal lt -> normal (List.fold_right tm_cons (tm_nil T) lt).
+Proof.
+  induction lt; simpl; intros.
+  - intros ? HS. inverts HS.
+  - intros ? HS. inverts X. inverts HS; eauto.
+    eapply IHlt; eauto.
+Defined.
 
 Lemma strong_norm_back T :
   forall t t', t --> t' ->
@@ -588,7 +602,10 @@ Proof.
     }
     eauto using step_multi_diamond.
   - (* list *) (* WRONG!!! *)
-    eauto using halt_back.
+    intros [Hh Hs]; split; intros; eauto using halt_back.
+    eapply Hs; eauto.
+    eapply step_multi_diamond; eauto.
+    eapply normal_foldr__normal; eauto.
 Defined.
 
 Lemma strong_norm_forward T :
@@ -606,8 +623,8 @@ Proof.
     intros [Hh [Hs1 Hs2]]; repeat split; eauto using halt_forward.
   - (* prod *)
     intros [Hh Hs]; split; eauto using halt_forward.
-  - (* list *) (* WRONG!!! *)
-    eauto using halt_forward.
+  - (* list *)
+    intros [Hh Hs]; split; intros; eauto using halt_forward.
 Defined.
 
 Corollary strong_norm_multi_back T :
@@ -726,11 +743,13 @@ Proof.
 Defined.
 
 Lemma subst_shadow : forall x t1 t2, <{[x:=t1]t2}> = t2 -> forall t, <{[x:=t1]([x:=t2]t)}> = <{[x:=t2]t}>.
+Proof.
   induction t; simpl; f_equal; eauto;
   repeat match goal with |- context [?x =? ?y] => destruct (eqb_spec x y); subst; simpl; eauto; try congruence end.
 Defined.
 
 Lemma subst_permute : forall x1 x2 t1 t2, x1 <> x2 -> <{[x1:=t1]t2}> = t2 -> <{[x2:=t2]t1}> = t1 -> forall t, <{[x1:=t1]([x2:=t2]t)}> = <{[x2:=t2]([x1:=t1]t)}>.
+Proof.
   introv Hneq Heq1 Heq2.
   induction t; simpl; eauto;
   repeat match goal with
@@ -855,7 +874,6 @@ Proof.
   - inverts r; destruct (IHHM _ _ eq_refl _ _ eq_refl); eauto.
 Defined.
 
-
 Proposition substm_Scase Gammav :
   forall t1 x t2 y t3,
   substm Gammav (tm_Scase t1 x t2 y t3) = tm_Scase (substm Gammav t1) x (substm (filter_out x Gammav) t2) y (substm (filter_out y Gammav) t3).
@@ -899,6 +917,137 @@ Proof.
   intros HM; induction HM; eauto.
 Defined.
 
+Proposition substm_nil Gammav T :
+  substm Gammav (tm_nil T) = tm_nil T.
+Proof.
+  induction Gammav as [|[x' [t' T']] ?]; intros; simpl; eauto.
+Defined.
+
+Proposition substm_cons Gammav :
+  forall t1 t2,
+  substm Gammav (tm_cons t1 t2) = tm_cons (substm Gammav t1) (substm Gammav t2).
+Proof.
+  induction Gammav as [|[x' [t' T']] ?]; intros; simpl; eauto.
+Defined.
+
+Proposition substm_Lcase Gammav :
+  forall t1 t2 x y t3,
+  substm Gammav (tm_Lcase t1 t2 x y t3) = tm_Lcase (substm Gammav t1) (substm Gammav t2) x y (substm (filter_out x (filter_out y Gammav)) t3).
+Proof.
+  induction Gammav as [|[x' [t' T']] ?]; intros; simpl; eauto.
+  destruct (eqb_spec x x'), (eqb_spec y x'); subst; simpl; try rewrite IHGammav; eauto; f_equal.
+  - rewrite eqb_refl. reflexivity.
+  - destruct (eqb_spec x x'); try congruence.
+    reflexivity.
+Defined.
+
+Proposition nil_multistep_elim t' T :
+  tm_nil T -->* t' ->
+  t' = tm_nil T.
+Proof.
+  remember (tm_nil T) as t.
+  intros HM. induction HM; intros; subst; eauto.
+  inverts r.
+Defined.
+
+Proposition cons_multistep_elim t1 t2 t' :
+  tm_cons t1 t2 -->* t' ->
+  exists t1' t2', t' = tm_cons t1' t2' /\ t1 -->* t1' /\ t2 -->* t2'.
+Proof.
+  remember (tm_cons t1 t2) as t.
+  intros HM. gen t1 t2. induction HM; intros; subst; eauto.
+  - inverts r; destruct (IHHM _ _ eq_refl) as (?&?&?&?&?); subst; eauto.
+    + exists x x0; eauto.
+    + exists x x0; eauto.
+Defined.
+
+Proposition cons_cong t1 t1' t2 t2' :
+  t1 -->* t1' ->
+  value t1' ->
+  t2 -->* t2' ->
+  tm_cons t1 t2 -->* tm_cons t1' t2'.
+Proof.
+  intros.
+  eapply multi_trans with (tm_cons t1' t2).
+  - clear X0 X1. induction X; eauto.
+  - induction X1; eauto.
+Defined.
+
+Proposition Lcase_cong1 t1 t1' t2 x y t3 :
+  t1 -->* t1' ->
+  tm_Lcase t1 t2 x y t3 -->* tm_Lcase t1' t2 x y t3.
+Proof.
+  intros HM. induction HM; eauto.
+Defined.
+
+Proposition list_value : forall t T,
+  value t ->
+  empty |-- t \in (List T) ->
+  exists lt, t = List.fold_right tm_cons (tm_nil T) lt /\ ForallT normal lt.
+Proof.
+  introv Hv HT. induction Hv; inverts HT.
+  - exists (@nil tm); split; eauto. constructor.
+  - destruct IHHv2 as (lt & Heq & Hnf); eauto.
+    exists (cons t1 lt); split; simpl; eauto.
+    + f_equal. eauto.
+    + constructor; eauto. apply value__normal; eauto.
+Defined.
+
+Proposition mor_list_inj lt1 lt2 T:
+  List.fold_right tm_cons (tm_nil T) lt1 = List.fold_right tm_cons (tm_nil T) lt2 ->
+  lt1 = lt2.
+Proof.
+  gen lt2. induction lt1; intros lt2; destruct lt2; simpl; intros; try discriminate; try congruence.
+  inverts H; f_equal; auto.
+Defined.
+
+Proposition strong_norm_cons__strong_norm :
+  forall t1 t2 T,
+  strong_norm (tm_cons t1 t2) (Ty_List T) ->
+  value t1 ->
+  empty |-- t1 \in T ->
+  value t2 ->
+  empty |-- t2 \in (List T) ->
+  strong_norm t1 T /\ strong_norm t2 (Ty_List T).
+Proof.
+  introv Hs Hv1 HT1 Hv2 HT2.
+  destruct Hs as [_ Hs].
+  lets (lt & Heq & Hnf) : list_value t2 ___; eauto.
+  subst t2.
+  specializes Hs (cons t1 lt) ___.
+  - constructor; eauto. apply value__normal; eauto.
+  - inverts Hs; split; eauto.
+    split; eauto using value__halt.
+    intros. apply value__normal in Hv1.
+    apply normal_multi__refl in X1; eauto using value__normal.
+    apply mor_list_inj in X1. subst. auto.
+Defined.
+
+Fact filter_close x Gv :
+  close Gv -> close (filter_out x Gv).
+Proof.
+  induction Gv as [|[x' [t T]] Gv]; simpl; intros; eauto.
+  inverts X.
+  destruct (x =? x'); simpl; try constructor; eauto.
+Defined.
+
+Proposition substm_let Gammav :
+  forall x t1 t2,
+  substm Gammav (tm_let x t1 t2) = tm_let x (substm Gammav t1) (substm (filter_out x Gammav) t2).
+Proof.
+  induction Gammav as [|[x' [t T]] ?]; simpl;
+  intros; eauto; destruct (x =? x'); eauto.
+Defined.
+
+Proposition let_cong1 x t1 t1' t2 :
+  t1 -->* t1' ->
+  tm_let x t1 t2 -->* tm_let x t1' t2.
+Proof.
+  intros HM; induction HM; eauto.
+Defined.
+
+Axiom FF : False.
+
 Theorem has_type__strong_norm t Gamma T :
   (to_context Gamma) |-- t \in T ->
   close Gamma ->
@@ -906,6 +1055,20 @@ Theorem has_type__strong_norm t Gamma T :
 Proof.
   introv HT. remember (to_context Gamma) as G. gen Gamma.
   induction HT; intros Gv Heq Hc; subst; simpl.
+  (* - admit.
+  - admit.
+  - admit.
+  - admit.
+  - admit.
+  - admit.
+  - admit.
+  - admit.
+  - admit.
+  - admit.
+  - admit.
+  - admit.
+  - admit. *)
+
   - (* var *) eauto using var_case.
   - (* abs *) split.
     + rewrite substm_abs. eauto using value__halt.
@@ -1040,12 +1203,86 @@ Proof.
     eapply multi_trans with (tm_snd (tm_pair t1 t2)).
     + eapply snd_cong; eauto.
     + apply multi_R. constructor; auto.
-  - (* nil *) admit.
-  - (* cons *) admit.
-  - (* Lcase *) admit.
-  - (* Lfix *) admit.
-  - (* let *) admit.
-Admitted.
+  - (* nil *) rewrite substm_nil.
+    split.
+    + eapply value__halt. constructor.
+    + intros. destruct lt.
+      * constructor.
+      * simpl in X. apply nil_multistep_elim in X.
+        discriminate.
+  - (* cons *) rewrite substm_cons.
+    specializes IHHT1; eauto.
+    specializes IHHT2; eauto.
+    lets (t1' & HM1 & Hnf1) : strong_norm__halt IHHT1.
+    lets (t2' & HM2 & Hnf2) : strong_norm__halt IHHT2.
+    split.
+    + exists (tm_cons t1' t2').
+      split.
+      * apply cons_cong; eauto.
+        eapply normal_wt__value; eauto.
+        eapply multi_preservation; eauto.
+        eapply substm_wt; eauto.
+      * intros t3 HS3. inverts HS3; eauto.
+    + intros. apply cons_multistep_elim in X.
+      destruct X as (t1'' & t2'' & Heq & HM1' & HM2').
+      destruct lt.
+      * discriminate.
+      * inverts Heq. inverts X0; constructor.
+        -- eauto using strong_norm_multi_forward.
+        -- destruct IHHT2 as [_ IH2].
+           eapply IH2; eauto.
+  - (* Lcase *) rewrite substm_Lcase.
+    specializes IHHT1; eauto.
+    lets (t1' & HM1 & Hnf1) : strong_norm__halt IHHT1.
+    assert (HT : empty |-- t1' \in (List T)).
+    {
+      eapply multi_preservation; eauto.
+      eapply substm_wt; eauto.
+    }
+    assert (Hv : value t1').
+    {
+      eauto using normal_wt__value.
+    }
+    inverts HT; inverts Hv.
+    + specializes IHHT2; eauto.
+      gen IHHT2. eapply strong_norm_multi_back; eauto.
+      eapply multi_trans with (tm_Lcase (tm_nil T) <{ [/Gv] t2 }> x y <{ [/filter_out x (filter_out y Gv)] t3 }>).
+      * eapply Lcase_cong1. eauto.
+      * apply multi_R. constructor.
+    + specializes IHHT3 (cons (x,t0,T) (cons (y,t4,Ty_List T) Gv)) ___.
+      * constructor; eauto.
+        -- constructor; eauto.
+           eapply strong_norm_cons__strong_norm with t0; eauto.
+           eauto using strong_norm_multi_forward.
+        -- eapply strong_norm_cons__strong_norm with t4; eauto.
+           eauto using strong_norm_multi_forward.
+      * gen IHHT3. eapply strong_norm_multi_back; simpl.
+        eapply multi_trans with (tm_Lcase (tm_cons t0 t4) <{ [/Gv] t2 }> x y <{ [/filter_out x (filter_out y Gv)] t3 }>).
+        -- eapply Lcase_cong1. eauto.
+        -- apply multi_R.
+           erewrite <- substm_subst; eauto.
+           erewrite <- substm_subst; eauto.
+           eauto using filter_close.
+  - (* Lfix *) destruct FF.
+  - (* let *) rewrite substm_let.
+    specializes IHHT1; eauto.
+    lets (t1' & HM & Hs) : strong_norm__halt IHHT1.
+    assert (HT : empty |-- t1' \in T1).
+    {
+      eapply multi_preservation; eauto.
+      eapply substm_wt; eauto.
+    }
+    specializes IHHT2 (cons (x,t1',T1) Gv) ___.
+    + constructor; eauto.
+      eauto using strong_norm_multi_forward.
+    + simpl in IHHT2. gen IHHT2.
+      eapply strong_norm_multi_back; eauto.
+      eapply multi_trans with (tm_let x t1' <{ [/filter_out x Gv] t2 }>).
+      * eauto using let_cong1.
+      * apply multi_R.
+        erewrite <-substm_subst; eauto.
+        constructor. eauto using normal_wt__value.
+Defined.
 
 Corollary has_type__halt t T :
   empty |-- t \in T -> halt t.
@@ -1062,12 +1299,16 @@ Definition pp_progress t T (H : empty |-- t \in T) :
   | inr (existT _ t' _) => Some t'
   end.
 
-Require Import List.
-Import ListNotations.
 Fixpoint simp_list t1 t2 (H : t1 -->* t2) : list tm :=
   match H with
   | multi_refl _ _ => [t2]
   | multi_step _ _ _ t1' t2' H' => t1 :: simp_list _ _ H'
+  end.
+
+Fixpoint simp_len t1 t2 (H : t1 -->* t2) : nat :=
+  match H with
+  | multi_refl _ _ => 0
+  | multi_step _ _ _ t1' t2' H' => S (simp_len _ _ H')
   end.
 
 Fixpoint simp_cor (l : list tm) : Type :=
@@ -1092,6 +1333,13 @@ Definition compute_list t T :
   fun HT => match has_type__halt _ _ HT with
   | existT _ t' (pair HM Hnf) => simp_list _ _ HM
   end.
+
+Definition compute_len t T :
+  empty |-- t \in T -> nat :=
+  fun HT => match has_type__halt _ _ HT with
+  | existT _ t' (pair HM Hnf) => simp_len _ _ HM
+  end.
+
 
 End STLC.
 
@@ -1123,3 +1371,155 @@ Proof.
 Defined.
 
 Compute (compute_list _ _ my_eqb_spec _ _ eg).
+
+
+(* internal extension *)
+Definition Nat : ty := Ty_List Ty_Unit.
+
+Definition tm' := (tm nat).
+Definition has_type' := (has_type nat eqb).
+
+Definition Ncase : tm' -> tm' -> nat -> tm' -> tm' :=
+  fun t1 t2 x t3 => tm_Lcase _ t1 t2 0 x t3.
+
+Notation "x '|->' v ';' m" := (update nat eqb x v m) (at level 100, v at next level, right associativity).
+
+Global Hint Resolve my_eqb_spec : core.
+
+Lemma Ncase_ty Gamma t1 t2 x t3 T :
+  has_type' t1 Nat Gamma ->
+  has_type' t2 T Gamma ->
+  x <> 0 ->
+  has_type' t3 T (x |-> Nat; 0 |-> Ty_Unit; Gamma) ->
+  has_type' (Ncase t1 t2 x t3) T Gamma.
+Proof.
+  unfold Ncase, Nat, has_type'.
+  intros.
+  econstructor; eauto.
+  gen X1. apply has_type_extensionality; eauto.
+  apply update_permute; eauto.
+Defined.
+
+Definition Nfix : tm' -> tm' -> tm' -> tm' :=
+  fun t t1 t2 => tm_Lfix nat t t1 (tm_abs 0 Ty_Unit t2).
+Lemma Nfix_ty Gamma t t1 t2 T :
+  Gamma 0 = None ->
+  has_type' t Nat Gamma ->
+  has_type' t1 T Gamma ->
+  has_type' t2 (Ty_Arrow Nat (Ty_Arrow T T)) Gamma ->
+  has_type' (Nfix t t1 t2) T Gamma.
+Proof.
+  unfold Nfix, Nat, has_type'.
+  intros.
+  econstructor; eauto.
+  econstructor.
+  eapply weaken; eauto.
+  intros x v Heq. unfold update.
+  destruct (my_eqb_spec 0 x); eauto.
+  subst. congruence.
+Defined.
+
+Definition zero := tm_nil nat Ty_Unit.
+Definition suc := tm_cons nat tm_unit.
+
+Lemma zero_ty Gamma:
+  has_type' zero Nat Gamma.
+Proof.
+  constructor.
+Defined.
+
+Lemma suc_ty t Gamma:
+  has_type' t Nat Gamma ->
+  has_type' (suc t) Nat Gamma.
+Proof.
+  unfold has_type' in *.
+  intros. econstructor; eauto.
+  econstructor.
+Defined.
+
+Definition add : tm' :=
+  tm_abs 1 Nat (
+  tm_abs 2 Nat (
+    Nfix (tm_var 1) (tm_var 2) (
+    tm_abs 3 Nat (
+    tm_abs 4 Nat
+    (suc (tm_var 4))))
+  )).
+
+Lemma add_ty Gamma :
+  Gamma 0 = None ->
+  has_type' add (Ty_Arrow Nat (Ty_Arrow Nat Nat)) Gamma.
+Proof.
+  unfold has_type', add.
+  econstructor. econstructor.
+  apply Nfix_ty.
+  - unfold update. simpl. auto.
+  - econstructor. reflexivity.
+  - econstructor. reflexivity.
+  - econstructor. econstructor.
+    apply suc_ty. econstructor. reflexivity.
+Defined.
+
+Definition mul : tm' :=
+  tm_abs 1 Nat (
+  tm_abs 2 Nat (
+    Nfix (tm_var 1) zero (
+    tm_abs 3 Nat (
+    tm_abs 4 Nat
+    (
+      tm_app (tm_app add (tm_var 2)) (tm_var 4)
+    ))
+  ))).
+Lemma mul_ty Gamma :
+  Gamma 0 = None ->
+  has_type' mul (Ty_Arrow Nat (Ty_Arrow Nat Nat)) Gamma.
+Proof.
+  unfold has_type', mul.
+  econstructor. econstructor.
+  apply Nfix_ty.
+  - unfold update. simpl. auto.
+  - econstructor. reflexivity.
+  - apply zero_ty.
+  - econstructor. econstructor. econstructor.
+    + econstructor.
+      * apply add_ty. unfold update. simpl. auto.
+      * econstructor. reflexivity.
+    + econstructor. reflexivity.
+Defined.
+
+Definition fac : tm' :=
+  tm_abs 1 Nat (
+    Nfix (tm_var 1) (suc zero) (
+      tm_abs 2 Nat (
+      tm_abs 3 Nat (
+        tm_app (tm_app mul (suc (tm_var 2))) (tm_var 3)
+      ))
+      )
+    ).
+Lemma fac_ty Gamma :
+  Gamma 0 = None ->
+  has_type' fac (Ty_Arrow Nat Nat) Gamma.
+Proof.
+  unfold has_type', mul.
+  econstructor.
+  apply Nfix_ty.
+  - unfold update. simpl. auto.
+  - econstructor. reflexivity.
+  - apply suc_ty. apply zero_ty.
+  - econstructor. econstructor. econstructor.
+    + econstructor.
+      * apply mul_ty. unfold update. simpl. auto.
+      * apply suc_ty. econstructor. reflexivity.
+    + econstructor. reflexivity.
+Defined.
+
+Definition three : tm' := suc (suc (suc zero)).
+Definition fac3 : tm' := tm_app fac three.
+Fact fac3_ty : has_type' fac3 Nat (empty _).
+Proof.
+  econstructor.
+  - apply fac_ty. reflexivity.
+  - repeat econstructor.
+Defined.
+
+Compute (compute_list _ _ my_eqb_spec _ _ fac3_ty).
