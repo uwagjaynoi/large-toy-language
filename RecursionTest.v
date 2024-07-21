@@ -6,9 +6,9 @@
                            | 0 | _ => F1
                            end" and "F1" (in eq1)
 *)
+From Coq Require Import List.
+Import ListNotations.
 
-Check nat_rec.
-Check list_rec.
 Axiom F1 : nat -> bool.
 Axiom F2 : nat -> bool.
 
@@ -120,3 +120,37 @@ Fail Definition test8 : tree -> nat :=
   | tn => 0
   | tc n ls rs => S (f (if false then ls else (tc n ls rs)))
   end.
+
+
+Module tree.
+Inductive tree (A : Set) : Set :=
+	| node : A -> list (tree A) -> tree A
+.
+
+
+Definition ind :=
+	forall (A : Set) (P : tree A -> Prop),
+	(forall (a : A)(l : list (tree A)), (forall x, In x l -> P x) -> P (node A a l))
+	-> forall (t : tree A), P t.
+
+Fixpoint sz {A : Set} (t : tree A) : nat :=
+	match t with
+	| node _ _ l => S (fold_right (fun x acc => acc + sz x) 0 l)
+	end.
+
+Lemma endPt {A : Type} {x y : A} {P : A -> Type} : x = y -> P x -> P y.
+Proof.
+	intros. subst. auto.
+Qed.
+
+Fixpoint tree_ind'' (A : Set) (P : tree A -> Prop)
+	(rec : forall (a : A)(l : list (tree A)), (forall x, In x l -> P x) -> P (node A a l)) (t : tree A) : P t :=
+	(* fun A P rec t => *)
+	match t with
+	| node _ a l =>
+		rec a l (@list_rec (tree A) (fun l => forall x, In x l -> P x) (fun _ contra => match contra with end)
+(fun a l IH x p => match p with or_introl eq => endPt eq (tree_ind'' A P rec a) | or_intror HIn => IH _ HIn end) l)
+	end.
+
+Check (tree_ind'' : ind).
+End tree.

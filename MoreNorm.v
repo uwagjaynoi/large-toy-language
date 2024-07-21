@@ -1,17 +1,30 @@
 Require Import Bool.Bool.
-Require Import Classes.CEquivalence.
 Require Import List. Import ListNotations.
-Require Classes.CMorphisms.
 From Lambda Require Import LibTactics.
 Set Default Goal Selector "!".
 
-Section STLC.
+Global Remove Hints not_eq_sym : core.
+Global Remove Hints iff_sym : core.
+Global Remove Hints Morphisms.iff_impl_subrelation : core.
+Global Remove Hints absurd_eq_true : core.
+Fact not_eq_sym (A : Type) (x y : A) : x <> y -> y <> x.
+Proof. auto. Defined.
+Fact absurd_eq_true b : False -> b = true.
+Proof.
+  intros F. destruct F.
+Defined.
+Global Hint Resolve not_eq_sym : core.
+Global Hint Resolve absurd_eq_true : core.
 
 (* Map *)
-Variable INDEX : Type.
-Variable eqb : INDEX -> INDEX -> bool.
+Definition INDEX : Type := nat.
+Definition eqb : INDEX -> INDEX -> bool := Nat.eqb.
 Infix "=?" := eqb (at level 70).
-Variable eqb_spec : forall x y, reflect (x=y) (x=?y).
+Theorem eqb_spec : forall (x y : nat), reflect (x = y) (x =? y).
+Proof.
+  induction x; intros [|y]; simpl; try (constructor; congruence).
+  destruct (IHx y); constructor; congruence.
+Defined.
 
 Property eqb_refl x : (x =? x) = true.
 Proof. destruct (eqb_spec x x); auto. Defined.
@@ -19,7 +32,7 @@ Property eqb_eq x y : (x =? y) = true <-> x = y.
 Proof. destruct (eqb_spec x y); split; auto. congruence. Defined.
 Property eqb_neq x y : (x =? y) = false <-> x <> y.
 Proof. destruct (eqb_spec x y); split; auto; congruence. Defined.
-Hint Resolve eqb_eq eqb_neq : core.
+Global Hint Resolve eqb_eq eqb_neq : core.
 
 Definition map (A : Type) : Type := INDEX -> option A.
 Definition empty {A : Type} : map A := fun _ => None.
@@ -32,7 +45,7 @@ Property update_eq A (m : map A) x v : (x |-> v ; m) x = Some v.
 Proof. repeat unfolds; rewrite eqb_refl; reflexivity. Defined.
 Property update_neq A (m : map A) x1 x2 v :
   x2 <> x1 -> (x2 |-> v ; m) x1 = m x1.
-Proof. intros Hneq. repeat unfolds. rewrite <- eqb_neq in Hneq. rewrite Hneq. reflexivity. Defined.
+Proof. intros Hneq. unfold update. apply eqb_neq in Hneq. rewrite Hneq. reflexivity. Defined.
 
 Definition mapeq {A} (m1 m2 : map A) : Type := forall x, m1 x = m2 x.
 Notation "f ~ g" := (mapeq f g) (at level 70).
@@ -47,7 +60,7 @@ Proof. congruence. Defined.
 Fact mapeq_cong {A} (f g : map A) x v :
   f ~ g -> (x |-> v; f) ~ (x |-> v; g).
 Proof. intros H x0. repeat unfolds. destruct (x =? x0); auto. Defined.
-Hint Resolve eq_to_mapeq mapeq_refl mapeq_sym : core.
+Global Hint Resolve eq_to_mapeq mapeq_refl mapeq_sym : core.
 
 Property update_shadow A (m : map A) x v1 v2 :
   (x |-> v2 ; x |-> v1 ; m) ~ (x |-> v2 ; m).
@@ -164,7 +177,7 @@ Inductive value : tm -> Type :=
   | v_nil T         : value (tm_nil T)
   | v_cons t1 t2    : value t1 -> value t2 -> value (tm_cons t1 t2)
 .
-Hint Constructors value : core.
+Global Hint Constructors value : core.
 
 Reserved Notation "t '-->' t'" (at level 40).
 Inductive step : tm -> tm -> Type :=
@@ -249,7 +262,7 @@ Inductive step : tm -> tm -> Type :=
     value v1 ->
     tm_let x v1 t2 --> <{[x:=v1]t2}>
 where "t '-->' t'" := (step t t').
-Hint Constructors step : core.
+Global Hint Constructors step : core.
 
 Definition context : Type := map ty.
 Reserved Notation "Gamma '|--' t '\in' T" (at level 40, T custom stlc_ty at level 0).
@@ -310,7 +323,7 @@ Inductive has_type : tm -> ty -> context -> Type :=
     (x |-> T1; Gamma) |-- t2 \in T2 ->
     Gamma |-- tm_let x t1 t2 \in T2
 where "Gamma '|--' t '\in' T" := (has_type t T Gamma).
-Hint Constructors has_type : core.
+Global Hint Constructors has_type : core.
 
 
 Lemma weaken t T :
@@ -333,23 +346,6 @@ Corollary has_type_extensionality :
 Proof.
   introv Hext HT. eapply weaken; eauto. congruence.
 Defined.
-
-(* Instance equiv_rel {A} :
-  Equivalence (@mapeq A) :=
-{|
-  Equivalence_Reflexive := mapeq_refl;
-  Equivalence_Symmetric := mapeq_sym;
-  Equivalence_Transitive := mapeq_trans
-|}.
-
-Instance update_morphism {A} x v :
-  CMorphisms.Proper (CMorphisms.respectful (@mapeq A) (@mapeq A)) (update x v) := fun _ _ => mapeq_cong _ _ _ _.
-
-Instance has_type_morphism t T :
-  CMorphisms.Proper (CMorphisms.respectful mapeq iffT) (has_type t T) :=
-  (fun m1 m2 Hequ =>
-   (has_type_extensionality m1 m2 t T Hequ,
-   has_type_extensionality m2 m1 t T (mapeq_sym m1 m2 Hequ))). *)
 
 Theorem progress : forall t T,
   empty |-- t \in T ->
@@ -453,15 +449,15 @@ Proof.
   eauto using subst_type.
 Defined.
 
-Inductive multi {X : Type} (R : crelation X) : crelation X :=
+Inductive multi {X : Type} (R : X -> X -> Type) : X -> X -> Type :=
   | multi_refl x : multi R x x
   | multi_step x y z : R x y -> multi R y z -> multi R x z.
-Hint Constructors multi : core.
+Global Hint Constructors multi : core.
 
-Fact multi_R (X : Type) (R : crelation X) x y : R x y -> multi R x y.
+Fact multi_R (X : Type) (R : X -> X -> Type) x y : R x y -> multi R x y.
 Proof. eauto. Defined.
 
-Theorem multi_trans (X : Type) (R : crelation X) x y z :
+Theorem multi_trans (X : Type) (R : X -> X -> Type) x y z :
   multi R x y -> multi R y z -> multi R x z.
 Proof.
   intros G; induction G; eauto.
@@ -469,8 +465,7 @@ Defined.
 
 Notation " t '-->*' t' " := (multi step t t') (at level 40).
 Definition normal t := forall t', t --> t' -> False.
-Hint Unfold normal : core.
-(* Hint Immediate term : idents …. *)
+Global Hint Unfold normal : core.
 
 Property value__normal : forall t, value t -> normal t.
 Proof.
@@ -516,8 +511,8 @@ Proof.
 Defined.
 
 Definition halt t := exists t', t -->* t' /\ normal t'.
-Hint Transparent halt : core.
-Hint Unfold halt : core.
+Global Hint Transparent halt : core.
+Global Hint Unfold halt : core.
 
 Property halt_back t t' :
   t --> t' ->
@@ -533,6 +528,22 @@ Property halt_forward t t' :
   halt t'.
 Proof.
   intros ? (? & ? & ?). eauto using step_multi_diamond.
+Defined.
+
+Property halt_multi_back t t' :
+  t -->* t' ->
+  halt t' ->
+  halt t.
+Proof.
+  intros HM; induction HM; eauto using halt_back.
+Defined.
+
+Property halt_multi_forward t t' :
+  t -->* t' ->
+  halt t ->
+  halt t'.
+Proof.
+  intros HM; induction HM; eauto using halt_forward.
 Defined.
 
 Inductive ForallT {A : Type} (P : A -> Type) : list A -> Type :=
@@ -601,7 +612,7 @@ Proof.
       intros t3 HS3. inverts HS3; eauto.
     }
     eauto using step_multi_diamond.
-  - (* list *) (* WRONG!!! *)
+  - (* list *)
     intros [Hh Hs]; split; intros; eauto using halt_back.
     eapply Hs; eauto.
     eapply step_multi_diamond; eauto.
@@ -1031,6 +1042,63 @@ Proof.
   destruct (x =? x'); simpl; try constructor; eauto.
 Defined.
 
+Proposition substm_Lfix Gammav :
+  forall t1 t2 t3,
+  substm Gammav (tm_Lfix t1 t2 t3) = tm_Lfix <{[/Gammav]t1}> <{[/Gammav]t2}> <{[/Gammav]t3}>.
+Proof.
+  induction Gammav as [|[x [t T]] ?]; intros; simpl; eauto.
+Defined.
+
+Proposition Lfix_cong1 t1 t1' t2 t3 :
+  t1 -->* t1' ->
+  tm_Lfix t1 t2 t3 -->* tm_Lfix t1' t2 t3.
+Proof.
+  intros HM. induction HM; eauto.
+Defined.
+
+Fact app_cong1 t1 t1' t2 :
+  t1 -->* t1' ->
+  tm_app t1 t2 -->* tm_app t1' t2.
+Proof.
+  intros HM; induction HM; eauto.
+Defined.
+
+Lemma Lfix_case t1 t2 t3 T U :
+  value t1 ->
+  empty |-- t1 \in (List T) ->
+  empty |-- t2 \in U ->
+  empty |-- t3 \in (T -> List T -> U -> U) ->
+  strong_norm t1 <{{List T}}> ->
+  strong_norm t2 U ->
+  strong_norm t3 <{{T -> List T -> U -> U}}> ->
+  strong_norm (tm_Lfix t1 t2 t3) U.
+Proof.
+  intros Hv HT.
+  gen t2 t3.
+  lets (lt & Heq & Hnf) : list_value t1 ___; eauto; subst.
+  induction lt; simpl in *; intros.
+  - gen X2. eapply strong_norm_multi_back. apply multi_R.
+    constructor.
+  - inverts Hv. inverts HT.
+    eapply strong_norm_back.
+    + eapply ST_LfixCons; eauto.
+    + destruct X1 as [(t' & HM & Hnf1) X1].
+      lets (t1' & t2' & Heq & HM1 & HM2) : cons_multistep_elim HM; subst.
+      specializes X1 (cons a lt) ___.
+      inverts X1.
+      eapply X3; repeat split; eauto using value__halt.
+      * intros. apply normal_multi__refl in X1.
+        -- apply mor_list_inj in X1. subst lt0. auto.
+        -- eauto using value__normal.
+      * eapply IHlt; eauto.
+        -- inverts Hnf. auto.
+        -- split.
+          ++ eauto using value__halt.
+          ++ intros. apply normal_multi__refl in X1.
+            ** apply mor_list_inj in X1. subst lt0. auto.
+            ** eauto using value__normal.
+Defined.
+
 Proposition substm_let Gammav :
   forall x t1 t2,
   substm Gammav (tm_let x t1 t2) = tm_let x (substm Gammav t1) (substm (filter_out x Gammav) t2).
@@ -1046,8 +1114,6 @@ Proof.
   intros HM; induction HM; eauto.
 Defined.
 
-Axiom FF : False.
-
 Theorem has_type__strong_norm t Gamma T :
   (to_context Gamma) |-- t \in T ->
   close Gamma ->
@@ -1055,20 +1121,6 @@ Theorem has_type__strong_norm t Gamma T :
 Proof.
   introv HT. remember (to_context Gamma) as G. gen Gamma.
   induction HT; intros Gv Heq Hc; subst; simpl.
-  (* - admit.
-  - admit.
-  - admit.
-  - admit.
-  - admit.
-  - admit.
-  - admit.
-  - admit.
-  - admit.
-  - admit.
-  - admit.
-  - admit.
-  - admit. *)
-
   - (* var *) eauto using var_case.
   - (* abs *) split.
     + rewrite substm_abs. eauto using value__halt.
@@ -1263,7 +1315,26 @@ Proof.
            erewrite <- substm_subst; eauto.
            erewrite <- substm_subst; eauto.
            eauto using filter_close.
-  - (* Lfix *) destruct FF.
+  - (* Lfix *) rewrite substm_Lfix.
+    specializes IHHT1 ___; eauto.
+    specializes IHHT2 ___; eauto.
+    specializes IHHT3 ___; eauto.
+    eapply substm_wt in HT1; eauto.
+    eapply substm_wt in HT2; eauto.
+    eapply substm_wt in HT3; eauto.
+    lets (t1' & HM & Hnf) : strong_norm__halt IHHT1.
+    eapply strong_norm_multi_back.
+    + eapply Lfix_cong1. apply HM.
+    + assert (HT1' : empty |-- t1' \in <{{List T}}>).
+      {
+        eapply multi_preservation; eauto.
+      }
+      assert (Hv : value t1').
+      {
+        eapply normal_wt__value; eauto.
+      }
+      eapply Lfix_case; eauto.
+      eapply strong_norm_multi_forward; eauto.
   - (* let *) rewrite substm_let.
     specializes IHHT1; eauto.
     lets (t1' & HM & Hs) : strong_norm__halt IHHT1.
@@ -1340,104 +1411,51 @@ Definition compute_len t T :
   | existT _ t' (pair HM Hnf) => simp_len _ _ HM
   end.
 
+Import SigTNotations.
+Fixpoint infinite_compute (n : nat) t T (HT : empty |-- t \in T) : sigT (fun t' => empty |-- t' \in T) /\ list (sigT (fun t' => empty |-- t' \in T)) :=
+  match n with
+  | 0 =>  ((t ; HT) , nil)
+  | S n' =>
+    match progress _ _ HT with
+    | inl _ => ((t ; HT), nil)
+    | inr (t' ; HS) =>
+      match infinite_compute n' t' T (preservation _ _ _ HT HS) with
+      | (fst, snd) => ((t ; HT), cons fst snd)
+      end
+    end
+  end.
 
-End STLC.
+Definition infinite_compute_list (n : nat) t T (HT : empty |-- t \in T) : list tm :=
+  match (infinite_compute n _ _ HT) with
+  | ((fst1 ; fst2), snd) => cons fst1 (List.map (fun t => match t with
+  | (t' ; _) => t' end
+  ) snd)
+  end.
 
-Check progress.
-
-Import Nat.
-Theorem my_eqb_spec (x y : nat) : reflect (x = y) (x =? y).
-Proof.
-  gen y. induction x.
-  - intros []; simpl; constructor; congruence.
-  - intros []; simpl.
-    + constructor. congruence.
-    + destruct (IHx n); constructor; congruence.
-Defined.
-
-Arguments tm_app {INDEX}.
-Arguments tm_abs {INDEX}.
-Arguments tm_var {INDEX}.
-Arguments tm_unit {INDEX}.
-Definition eg : has_type nat eqb
+Definition eg : has_type
   (tm_app
     (tm_app
       (tm_app (tm_abs 0 (Ty_Arrow Ty_Unit Ty_Unit) (tm_abs 1 (Ty_Arrow Ty_Unit Ty_Unit) (tm_abs 2 Ty_Unit (tm_app (tm_var 0) (tm_app (tm_var 1) (tm_var 2)))))) (tm_abs 3 Ty_Unit (tm_var 3)))
       (tm_abs 3 Ty_Unit tm_unit))
     tm_unit)
-  Ty_Unit  (empty _).
+  Ty_Unit (empty).
 Proof.
   repeat (try reflexivity; econstructor).
 Defined.
 
-Compute (compute_list _ _ my_eqb_spec _ _ eg).
-
-
-(* internal extension *)
+(* Internal extension *)
 Definition Nat : ty := Ty_List Ty_Unit.
 
-Definition tm' := (tm nat).
-Definition has_type' := (has_type nat eqb).
+Definition Ncase : tm -> tm -> nat -> tm -> tm :=
+  fun t1 t2 x t3 => tm_Lcase t1 t2 0 x t3.
 
-Definition Ncase : tm' -> tm' -> nat -> tm' -> tm' :=
-  fun t1 t2 x t3 => tm_Lcase _ t1 t2 0 x t3.
+Definition Nfix : tm -> tm -> tm -> tm :=
+  fun t t1 t2 => tm_Lfix t t1 (tm_abs 0 Ty_Unit t2).
 
-Notation "x '|->' v ';' m" := (update nat eqb x v m) (at level 100, v at next level, right associativity).
+Definition zero := tm_nil Ty_Unit.
+Definition suc := tm_cons tm_unit.
 
-Global Hint Resolve my_eqb_spec : core.
-
-Lemma Ncase_ty Gamma t1 t2 x t3 T :
-  has_type' t1 Nat Gamma ->
-  has_type' t2 T Gamma ->
-  x <> 0 ->
-  has_type' t3 T (x |-> Nat; 0 |-> Ty_Unit; Gamma) ->
-  has_type' (Ncase t1 t2 x t3) T Gamma.
-Proof.
-  unfold Ncase, Nat, has_type'.
-  intros.
-  econstructor; eauto.
-  gen X1. apply has_type_extensionality; eauto.
-  apply update_permute; eauto.
-Defined.
-
-Definition Nfix : tm' -> tm' -> tm' -> tm' :=
-  fun t t1 t2 => tm_Lfix nat t t1 (tm_abs 0 Ty_Unit t2).
-Lemma Nfix_ty Gamma t t1 t2 T :
-  Gamma 0 = None ->
-  has_type' t Nat Gamma ->
-  has_type' t1 T Gamma ->
-  has_type' t2 (Ty_Arrow Nat (Ty_Arrow T T)) Gamma ->
-  has_type' (Nfix t t1 t2) T Gamma.
-Proof.
-  unfold Nfix, Nat, has_type'.
-  intros.
-  econstructor; eauto.
-  econstructor.
-  eapply weaken; eauto.
-  intros x v Heq. unfold update.
-  destruct (my_eqb_spec 0 x); eauto.
-  subst. congruence.
-Defined.
-
-Definition zero := tm_nil nat Ty_Unit.
-Definition suc := tm_cons nat tm_unit.
-
-Lemma zero_ty Gamma:
-  has_type' zero Nat Gamma.
-Proof.
-  constructor.
-Defined.
-
-Lemma suc_ty t Gamma:
-  has_type' t Nat Gamma ->
-  has_type' (suc t) Nat Gamma.
-Proof.
-  unfold has_type' in *.
-  intros. econstructor; eauto.
-  econstructor.
-Defined.
-
-Definition add : tm' :=
+Definition add : tm :=
   tm_abs 1 Nat (
   tm_abs 2 Nat (
     Nfix (tm_var 1) (tm_var 2) (
@@ -1445,22 +1463,7 @@ Definition add : tm' :=
     tm_abs 4 Nat
     (suc (tm_var 4))))
   )).
-
-Lemma add_ty Gamma :
-  Gamma 0 = None ->
-  has_type' add (Ty_Arrow Nat (Ty_Arrow Nat Nat)) Gamma.
-Proof.
-  unfold has_type', add.
-  econstructor. econstructor.
-  apply Nfix_ty.
-  - unfold update. simpl. auto.
-  - econstructor. reflexivity.
-  - econstructor. reflexivity.
-  - econstructor. econstructor.
-    apply suc_ty. econstructor. reflexivity.
-Defined.
-
-Definition mul : tm' :=
+Definition mul : tm :=
   tm_abs 1 Nat (
   tm_abs 2 Nat (
     Nfix (tm_var 1) zero (
@@ -1470,24 +1473,7 @@ Definition mul : tm' :=
       tm_app (tm_app add (tm_var 2)) (tm_var 4)
     ))
   ))).
-Lemma mul_ty Gamma :
-  Gamma 0 = None ->
-  has_type' mul (Ty_Arrow Nat (Ty_Arrow Nat Nat)) Gamma.
-Proof.
-  unfold has_type', mul.
-  econstructor. econstructor.
-  apply Nfix_ty.
-  - unfold update. simpl. auto.
-  - econstructor. reflexivity.
-  - apply zero_ty.
-  - econstructor. econstructor. econstructor.
-    + econstructor.
-      * apply add_ty. unfold update. simpl. auto.
-      * econstructor. reflexivity.
-    + econstructor. reflexivity.
-Defined.
-
-Definition fac : tm' :=
+Definition fac : tm :=
   tm_abs 1 Nat (
     Nfix (tm_var 1) (suc zero) (
       tm_abs 2 Nat (
@@ -1496,30 +1482,11 @@ Definition fac : tm' :=
       ))
       )
     ).
-Lemma fac_ty Gamma :
-  Gamma 0 = None ->
-  has_type' fac (Ty_Arrow Nat Nat) Gamma.
+Definition n : tm := suc (suc (suc (suc zero))).
+Definition facn : tm := tm_app fac n.
+Fact fac_ty : has_type facn Nat empty.
 Proof.
-  unfold has_type', mul.
-  econstructor.
-  apply Nfix_ty.
-  - unfold update. simpl. auto.
-  - econstructor. reflexivity.
-  - apply suc_ty. apply zero_ty.
-  - econstructor. econstructor. econstructor.
-    + econstructor.
-      * apply mul_ty. unfold update. simpl. auto.
-      * apply suc_ty. econstructor. reflexivity.
-    + econstructor. reflexivity.
+  repeat econstructor.
 Defined.
 
-Definition three : tm' := suc (suc (suc zero)).
-Definition fac3 : tm' := tm_app fac three.
-Fact fac3_ty : has_type' fac3 Nat (empty _).
-Proof.
-  econstructor.
-  - apply fac_ty. reflexivity.
-  - repeat econstructor.
-Defined.
-
-Compute (compute_list _ _ my_eqb_spec _ _ fac3_ty).
+(* Compute (compute_list _ _ fac_ty). *)
